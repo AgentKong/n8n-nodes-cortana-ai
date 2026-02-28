@@ -1,4 +1,4 @@
-import type { ICredentialType, INodeProperties } from 'n8n-workflow';
+import type { ICredentialTestRequest, ICredentialType, INodeProperties } from 'n8n-workflow';
 
 export class CortanaAiApi implements ICredentialType {
   name = 'cortanaAiApi';
@@ -25,4 +25,18 @@ export class CortanaAiApi implements ICredentialType {
         'Your Cortana AI Business ID. Find it in the URL when viewing business settings.',
     },
   ];
+
+  test: ICredentialTestRequest = {
+    request: {
+      baseURL: 'https://app.agentkong.ai',
+      url: '/api/v1/conversion-types',
+      method: 'GET',
+      qs: {
+        businessId: '={{$credentials.businessId}}',
+      },
+      headers: {
+        Authorization: '=Bearer {{$credentials.apiKey}}',
+      },
+    },
+  };
 }
