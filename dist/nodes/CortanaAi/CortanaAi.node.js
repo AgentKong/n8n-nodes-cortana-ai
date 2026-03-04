@@ -1,7 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CortanaAi = void 0;
+const n8n_workflow_1 = require("n8n-workflow");
 const BASE_URL = 'https://app.agentkong.ai/api/v1';
+// Keys in fieldMappings that are internal config, not actual source→target field mappings
+const MAPPING_SKIP_KEYS = new Set([
+    'config', 'webhookId', 'webhookTopic', 'pageTokens', 'ghlEventType', 'ghlLocationId',
+    'formId', 'typeformFormId', 'whopConnectionId',
+]);
 class CortanaAi {
     constructor() {
         this.description = {
@@ -94,39 +100,56 @@ class CortanaAi {
                 },
                 // ─── Create Conversion Fields ────────────────────────────────────────
                 {
-                    displayName: 'Conversion Type Name or ID',
-                    name: 'conversionConfigId',
+                    displayName: 'Conversion Source Name or ID',
+                    name: 'conversionSourceId',
                     type: 'options',
                     required: true,
                     typeOptions: {
-                        loadOptionsMethod: 'getConversionTypes',
+                        loadOptionsMethod: 'getConversionSources',
                     },
                     displayOptions: {
                         show: { resource: ['conversion'], operation: ['create'] },
                     },
                     default: '',
-                    description: 'The conversion type to record. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+                    description: 'The conversion source to record data into. Each source has its own field mappings. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
                 },
                 {
-                    displayName: 'Email',
-                    name: 'email',
-                    type: 'string',
-                    placeholder: 'name@email.com',
+                    displayName: 'Source Fields',
+                    name: 'sourceFields',
+                    type: 'fixedCollection',
+                    typeOptions: { multipleValues: true },
                     displayOptions: {
                         show: { resource: ['conversion'], operation: ['create'] },
                     },
-                    default: '',
-                    description: 'Contact email address. Required if phone is not provided.',
-                },
-                {
-                    displayName: 'Phone',
-                    name: 'phone',
-                    type: 'string',
-                    displayOptions: {
-                        show: { resource: ['conversion'], operation: ['create'] },
-                    },
-                    default: '',
-                    description: 'Contact phone number (include country code). Required if email is not provided.',
+                    default: {},
+                    description: 'Field values for this conversion source. Field names come from the source\'s configured field mappings.',
+                    placeholder: 'Add Source Field',
+                    options: [
+                        {
+                            name: 'fields',
+                            displayName: 'Field',
+                            values: [
+                                {
+                                    displayName: 'Field Name',
+                                    name: 'key',
+                                    type: 'options',
+                                    typeOptions: {
+                                        loadOptionsMethod: 'getSourceFieldKeys',
+                                        loadOptionsDependsOn: ['conversionSourceId'],
+                                    },
+                                    default: '',
+                                    description: 'The source field name (as configured in Cortana AI field mappings)',
+                                },
+                                {
+                                    displayName: 'Value',
+                                    name: 'value',
+                                    type: 'string',
+                                    default: '',
+                                    description: 'The value to send for this field',
+                                },
+                            ],
+                        },
+                    ],
                 },
                 {
                     displayName: 'Additional Fields',
@@ -139,17 +162,11 @@ class CortanaAi {
                     default: {},
                     options: [
                         {
-                            displayName: 'Contact Name',
-                            name: 'name',
-                            type: 'string',
-                            default: '',
-                        },
-                        {
                             displayName: 'Revenue',
                             name: 'revenue',
                             type: 'number',
                             default: 0,
-                            description: 'Revenue amount (e.g. 99.99)',
+                            description: 'Revenue value (e.g. 99.99)',
                         },
                         {
                             displayName: 'Currency',
@@ -236,18 +253,18 @@ class CortanaAi {
                     default: {},
                     options: [
                         {
-                            displayName: 'Start Date',
-                            name: 'startDate',
+                            displayName: 'Since Date',
+                            name: 'since',
                             type: 'dateTime',
                             default: '',
-                            description: 'Filter conversions on or after this date',
+                            description: 'Only return conversions on or after this date',
                         },
                         {
-                            displayName: 'End Date',
-                            name: 'endDate',
-                            type: 'dateTime',
+                            displayName: 'Conversion Type',
+                            name: 'type',
+                            type: 'string',
                             default: '',
-                            description: 'Filter conversions on or before this date',
+                            description: 'Filter by conversion type name (e.g. lead, purchase)',
                         },
                         {
                             displayName: 'Contact Email',
@@ -255,34 +272,120 @@ class CortanaAi {
                             type: 'string',
                             default: '',
                         },
+                        {
+                            displayName: 'Contact Phone',
+                            name: 'contactPhone',
+                            type: 'string',
+                            default: '',
+                        },
                     ],
                 },
                 // ─── Search Contacts Fields ──────────────────────────────────────────
                 {
-                    displayName: 'Search Query',
-                    name: 'query',
+                    displayName: 'Phone Number',
+                    name: 'phone',
                     type: 'string',
                     required: true,
                     displayOptions: {
                         show: { resource: ['contact'], operation: ['search'] },
                     },
                     default: '',
-                    description: 'Search contacts by name, email, or phone number',
+                    description: 'Phone number to search for (include country code, e.g. +14155552671)',
                 },
                 {
-                    displayName: 'Limit',
-                    name: 'limit',
-                    type: 'number',
-                    typeOptions: { minValue: 1, maxValue: 100 },
+                    displayName: 'Additional Fields',
+                    name: 'contactSearchFields',
+                    type: 'collection',
+                    placeholder: 'Add Field',
                     displayOptions: {
                         show: { resource: ['contact'], operation: ['search'] },
                     },
-                    default: 20,
+                    default: {},
+                    options: [
+                        {
+                            displayName: 'Email',
+                            name: 'email',
+                            type: 'string',
+                            default: '',
+                            description: 'Search by email instead of or in addition to phone',
+                        },
+                        {
+                            displayName: 'Name',
+                            name: 'name',
+                            type: 'string',
+                            default: '',
+                            description: 'Search by contact name',
+                        },
+                        {
+                            displayName: 'Limit',
+                            name: 'limit',
+                            type: 'number',
+                            typeOptions: { minValue: 1, maxValue: 100 },
+                            default: 20,
+                            description: 'Max number of contacts to return',
+                        },
+                    ],
                 },
             ],
         };
         this.methods = {
             loadOptions: {
+                async getConversionSources() {
+                    const credentials = await this.getCredentials('cortanaAiApi');
+                    const response = await this.helpers.httpRequest({
+                        method: 'GET',
+                        url: `${BASE_URL}/conversion-sources`,
+                        headers: {
+                            Authorization: `Bearer ${credentials.apiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        qs: { businessId: credentials.businessId },
+                    });
+                    return response.data.map((source) => {
+                        var _a, _b, _c, _d;
+                        const configName = (_d = (_b = (_a = source.conversionConfig) === null || _a === void 0 ? void 0 : _a.displayName) !== null && _b !== void 0 ? _b : (_c = source.conversionConfig) === null || _c === void 0 ? void 0 : _c.name) !== null && _d !== void 0 ? _d : '';
+                        // Encode both sourceId and conversionConfigId in the value so execute can use both
+                        const encodedValue = `${source.id}__${source.conversionConfigId}`;
+                        return {
+                            name: `${source.name}${configName ? ` (${configName})` : ''}`,
+                            value: encodedValue,
+                        };
+                    });
+                },
+                async getSourceFieldKeys() {
+                    const credentials = await this.getCredentials('cortanaAiApi');
+                    // Get the currently selected source value (encoded as "sourceId__configId")
+                    const encodedSourceId = this.getCurrentNodeParameter('conversionSourceId');
+                    if (!encodedSourceId)
+                        return [];
+                    const sourceId = encodedSourceId.split('__')[0];
+                    const response = await this.helpers.httpRequest({
+                        method: 'GET',
+                        url: `${BASE_URL}/conversion-sources`,
+                        headers: {
+                            Authorization: `Bearer ${credentials.apiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        qs: { businessId: credentials.businessId },
+                    });
+                    const sources = response.data;
+                    const selectedSource = sources.find((s) => s.id === sourceId);
+                    if (!selectedSource || !selectedSource.fieldMappings)
+                        return [];
+                    const raw = selectedSource.fieldMappings;
+                    // fieldMappings may be stored as { mappings: { ... } } or flat { ... }
+                    const fieldMappings = raw.mappings && typeof raw.mappings === 'object'
+                        ? raw.mappings
+                        : raw;
+                    // Show the target/standard field name (e.g. "revenue") as label
+                    // but send the source field key (e.g. "eventValue") as value
+                    return Object.entries(fieldMappings)
+                        .filter(([sourceKey]) => !MAPPING_SKIP_KEYS.has(sourceKey))
+                        .map(([sourceKey, targetKey]) => ({
+                        name: targetKey || sourceKey,
+                        value: sourceKey,
+                    }));
+                },
                 async getConversionTypes() {
                     const credentials = await this.getCredentials('cortanaAiApi');
                     const response = await this.helpers.httpRequest({
@@ -303,6 +406,7 @@ class CortanaAi {
         };
     }
     async execute() {
+        var _a;
         const credentials = await this.getCredentials('cortanaAiApi');
         const apiKey = credentials.apiKey;
         const businessId = credentials.businessId;
@@ -311,87 +415,122 @@ class CortanaAi {
         for (let i = 0; i < items.length; i++) {
             const resource = this.getNodeParameter('resource', i);
             const operation = this.getNodeParameter('operation', i);
-            if (resource === 'conversion') {
-                if (operation === 'create') {
-                    const conversionConfigId = this.getNodeParameter('conversionConfigId', i);
-                    const email = this.getNodeParameter('email', i);
-                    const phone = this.getNodeParameter('phone', i);
-                    const additionalFields = this.getNodeParameter('additionalFields', i);
-                    const body = {
-                        businessId,
-                        conversionConfigId,
-                        ...(email && { email }),
-                        ...(phone && { phone }),
-                        ...additionalFields,
-                    };
-                    const result = await this.helpers.httpRequest({
-                        method: 'POST',
-                        url: `${BASE_URL}/conversions`,
-                        headers: {
-                            Authorization: `Bearer ${apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
-                        body,
-                    });
-                    returnData.push(result);
-                }
-                if (operation === 'getMany') {
-                    const returnAll = this.getNodeParameter('returnAll', i);
-                    const limit = returnAll ? 100 : this.getNodeParameter('limit', i);
-                    const filters = this.getNodeParameter('filters', i);
-                    const result = await this.helpers.httpRequest({
-                        method: 'GET',
-                        url: `${BASE_URL}/conversions`,
-                        headers: {
-                            Authorization: `Bearer ${apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
-                        qs: {
+            try {
+                if (resource === 'conversion') {
+                    if (operation === 'create') {
+                        const encodedSourceId = this.getNodeParameter('conversionSourceId', i);
+                        if (!encodedSourceId || !encodedSourceId.includes('__')) {
+                            throw new n8n_workflow_1.NodeOperationError(this.getNode(), 'Invalid conversion source selected', { itemIndex: i });
+                        }
+                        const [conversionSourceId, conversionConfigId] = encodedSourceId.split('__');
+                        const sourceFields = this.getNodeParameter('sourceFields', i);
+                        const additionalFields = this.getNodeParameter('additionalFields', i);
+                        const sourceFieldData = {};
+                        if (sourceFields.fields && Array.isArray(sourceFields.fields)) {
+                            for (const field of sourceFields.fields) {
+                                if (field.key && field.value !== undefined && field.value !== '') {
+                                    sourceFieldData[field.key] = field.value;
+                                }
+                            }
+                        }
+                        const body = {
                             businessId,
-                            limit,
-                            ...(filters.startDate && { startDate: filters.startDate }),
-                            ...(filters.endDate && { endDate: filters.endDate }),
-                            ...(filters.contactEmail && { contactEmail: filters.contactEmail }),
-                        },
-                    });
-                    const entries = result.data;
-                    returnData.push(...(entries || []));
+                            conversionSourceId,
+                            conversionConfigId,
+                            ...sourceFieldData,
+                            ...additionalFields,
+                        };
+                        const result = await this.helpers.httpRequest({
+                            method: 'POST',
+                            url: `${BASE_URL}/conversions`,
+                            headers: {
+                                Authorization: `Bearer ${apiKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body,
+                        });
+                        returnData.push({ json: result, pairedItem: { item: i } });
+                    }
+                    if (operation === 'getMany') {
+                        const returnAll = this.getNodeParameter('returnAll', i);
+                        const limit = returnAll ? 100 : this.getNodeParameter('limit', i);
+                        const filters = this.getNodeParameter('filters', i);
+                        const result = await this.helpers.httpRequest({
+                            method: 'GET',
+                            url: `${BASE_URL}/conversions`,
+                            headers: {
+                                Authorization: `Bearer ${apiKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            qs: {
+                                businessId,
+                                limit,
+                                ...(filters.since && { since: filters.since }),
+                                ...(filters.type && { type: filters.type }),
+                                ...(filters.contactEmail && { contactEmail: filters.contactEmail }),
+                                ...(filters.contactPhone && { contactPhone: filters.contactPhone }),
+                            },
+                        });
+                        const entries = result.data || [];
+                        for (const entry of entries) {
+                            returnData.push({ json: entry, pairedItem: { item: i } });
+                        }
+                    }
+                }
+                if (resource === 'contact') {
+                    if (operation === 'search') {
+                        const phone = this.getNodeParameter('phone', i);
+                        const contactSearchFields = this.getNodeParameter('contactSearchFields', i);
+                        const limit = (_a = contactSearchFields.limit) !== null && _a !== void 0 ? _a : 20;
+                        const searchTerm = phone || contactSearchFields.email || contactSearchFields.name || '';
+                        if (!searchTerm) {
+                            throw new n8n_workflow_1.NodeOperationError(this.getNode(), 'Provide at least a Phone Number to search contacts', { itemIndex: i });
+                        }
+                        const result = await this.helpers.httpRequest({
+                            method: 'GET',
+                            url: `${BASE_URL}/contacts`,
+                            headers: {
+                                Authorization: `Bearer ${apiKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            qs: { businessId, search: searchTerm, limit },
+                        });
+                        const contacts = result.data || [];
+                        for (const contact of contacts) {
+                            returnData.push({ json: contact, pairedItem: { item: i } });
+                        }
+                    }
+                }
+                if (resource === 'conversionType') {
+                    if (operation === 'getMany') {
+                        const result = await this.helpers.httpRequest({
+                            method: 'GET',
+                            url: `${BASE_URL}/conversion-types`,
+                            headers: {
+                                Authorization: `Bearer ${apiKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            qs: { businessId },
+                        });
+                        const types = result.data || [];
+                        for (const type of types) {
+                            returnData.push({ json: type, pairedItem: { item: i } });
+                        }
+                    }
                 }
             }
-            if (resource === 'contact') {
-                if (operation === 'search') {
-                    const query = this.getNodeParameter('query', i);
-                    const limit = this.getNodeParameter('limit', i);
-                    const result = await this.helpers.httpRequest({
-                        method: 'GET',
-                        url: `${BASE_URL}/contacts`,
-                        headers: {
-                            Authorization: `Bearer ${apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
-                        qs: { businessId, q: query, limit },
-                    });
-                    const contacts = result.data;
-                    returnData.push(...(contacts || []));
+            catch (error) {
+                if (this.continueOnFail()) {
+                    returnData.push({ json: { error: error.message }, pairedItem: { item: i } });
+                    continue;
                 }
-            }
-            if (resource === 'conversionType') {
-                if (operation === 'getMany') {
-                    const result = await this.helpers.httpRequest({
-                        method: 'GET',
-                        url: `${BASE_URL}/conversion-types`,
-                        headers: {
-                            Authorization: `Bearer ${apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
-                        qs: { businessId },
-                    });
-                    const types = result.data;
-                    returnData.push(...(types || []));
-                }
+                if (error instanceof n8n_workflow_1.NodeOperationError)
+                    throw error;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                throw new n8n_workflow_1.NodeApiError(this.getNode(), error);
             }
         }
-        return [this.helpers.returnJsonArray(returnData)];
+        return [returnData];
     }
 }
 exports.CortanaAi = CortanaAi;

@@ -43,7 +43,41 @@ class CortanaAiTrigger {
                     default: ['conversion.created'],
                     required: true,
                 },
+                {
+                    displayName: 'Filter by Conversion Source',
+                    name: 'conversionSourceIds',
+                    type: 'multiOptions',
+                    typeOptions: {
+                        loadOptionsMethod: 'getConversionSources',
+                    },
+                    default: [],
+                    description: 'Only trigger when a conversion is recorded from these sources. Leave empty to trigger for all sources.',
+                },
             ],
+        };
+        this.methods = {
+            loadOptions: {
+                async getConversionSources() {
+                    const credentials = await this.getCredentials('cortanaAiApi');
+                    const response = await this.helpers.httpRequest({
+                        method: 'GET',
+                        url: `${BASE_URL}/conversion-sources`,
+                        headers: {
+                            Authorization: `Bearer ${credentials.apiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        qs: { businessId: credentials.businessId },
+                    });
+                    return response.data.map((source) => {
+                        var _a, _b, _c, _d;
+                        const configName = (_d = (_b = (_a = source.conversionConfig) === null || _a === void 0 ? void 0 : _a.displayName) !== null && _b !== void 0 ? _b : (_c = source.conversionConfig) === null || _c === void 0 ? void 0 : _c.name) !== null && _d !== void 0 ? _d : '';
+                        return {
+                            name: `${source.name}${configName ? ` (${configName})` : ''}`,
+                            value: source.id,
+                        };
+                    });
+                },
+            },
         };
         this.webhookMethods = {
             default: {
@@ -55,6 +89,17 @@ class CortanaAiTrigger {
                     const credentials = await this.getCredentials('cortanaAiApi');
                     const webhookUrl = this.getNodeWebhookUrl('default');
                     const events = this.getNodeParameter('events');
+                    const conversionSourceIds = this.getNodeParameter('conversionSourceIds');
+                    const body = {
+                        businessId: credentials.businessId,
+                        targetUrl: webhookUrl,
+                        events,
+                        platform: 'n8n',
+                    };
+                    // Only add filters if specific sources are selected
+                    if (conversionSourceIds.length > 0) {
+                        body.filters = { sourceIds: conversionSourceIds };
+                    }
                     const response = await this.helpers.httpRequest({
                         method: 'POST',
                         url: `${BASE_URL}/webhooks/subscribe`,
@@ -62,12 +107,7 @@ class CortanaAiTrigger {
                             Authorization: `Bearer ${credentials.apiKey}`,
                             'Content-Type': 'application/json',
                         },
-                        body: {
-                            businessId: credentials.businessId,
-                            targetUrl: webhookUrl,
-                            events,
-                            platform: 'n8n',
-                        },
+                        body,
                     });
                     const webhookData = this.getWorkflowStaticData('node');
                     webhookData.subscriptionId = response.data

@@ -25,6 +25,19 @@ class CortanaAiApi {
                 description: 'Your Cortana AI Business ID. Find it in the URL when viewing business settings.',
             },
         ];
+        this.test = {
+            request: {
+                baseURL: 'https://app.agentkong.ai',
+                url: '/api/v1/conversion-types',
+                method: 'GET',
+                qs: {
+                    businessId: '={{$credentials.businessId}}',
+                },
+                headers: {
+                    Authorization: '=Bearer {{$credentials.apiKey}}',
+                },
+            },
+        };
     }
 }
 exports.CortanaAiApi = CortanaAiApi;

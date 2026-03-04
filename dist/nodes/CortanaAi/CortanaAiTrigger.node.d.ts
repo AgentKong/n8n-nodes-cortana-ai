@@ -1,6 +1,11 @@
-import type { IHookFunctions, IWebhookFunctions, INodeType, INodeTypeDescription, IWebhookResponseData } from 'n8n-workflow';
+import type { IHookFunctions, IWebhookFunctions, INodeType, INodeTypeDescription, IWebhookResponseData, ILoadOptionsFunctions, INodePropertyOptions } from 'n8n-workflow';
 export declare class CortanaAiTrigger implements INodeType {
     description: INodeTypeDescription;
+    methods: {
+        loadOptions: {
+            getConversionSources(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]>;
+        };
+    };
     webhookMethods: {
         default: {
             checkExists(this: IHookFunctions): Promise<boolean>;

@@ -56,3 +56,6 @@ gcp-credentials.json
 
 # Nested repo (no submodule mapping)
 AgentKong-Shopify-Pixel/cortana-ai/
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore

@@ -5,6 +5,8 @@ import type {
   INodeType,
   INodeTypeDescription,
   IWebhookResponseData,
+  ILoadOptionsFunctions,
+  INodePropertyOptions,
 } from 'n8n-workflow';
 
 const BASE_URL = 'https://app.agentkong.ai/api/v1';
@@ -49,7 +51,45 @@ export class CortanaAiTrigger implements INodeType {
         default: ['conversion.created'],
         required: true,
       },
+      {
+        displayName: 'Filter by Conversion Source',
+        name: 'conversionSourceIds',
+        type: 'multiOptions',
+        typeOptions: {
+          loadOptionsMethod: 'getConversionSources',
+        },
+        default: [],
+        description:
+          'Only trigger when a conversion is recorded from these sources. Leave empty to trigger for all sources.',
+      },
     ],
+  };
+
+  methods = {
+    loadOptions: {
+      async getConversionSources(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const credentials = await this.getCredentials('cortanaAiApi');
+        const response = await this.helpers.httpRequest({
+          method: 'GET',
+          url: `${BASE_URL}/conversion-sources`,
+          headers: {
+            Authorization: `Bearer ${credentials.apiKey as string}`,
+            'Content-Type': 'application/json',
+          },
+          qs: { businessId: credentials.businessId as string },
+        });
+        return (response.data as IDataObject[]).map((source: IDataObject) => {
+          const configName =
+            (source.conversionConfig as IDataObject)?.displayName ??
+            (source.conversionConfig as IDataObject)?.name ??
+            '';
+          return {
+            name: `${source.name as string}${configName ? ` (${configName})` : ''}`,
+            value: source.id as string,
+          };
+        });
+      },
+    },
   };
 
   webhookMethods = {
@@ -63,6 +103,19 @@ export class CortanaAiTrigger implements INodeType {
         const credentials = await this.getCredentials('cortanaAiApi');
         const webhookUrl = this.getNodeWebhookUrl('default') as string;
         const events = this.getNodeParameter('events') as string[];
+        const conversionSourceIds = this.getNodeParameter('conversionSourceIds') as string[];
+
+        const body: IDataObject = {
+          businessId: credentials.businessId as string,
+          targetUrl: webhookUrl,
+          events,
+          platform: 'n8n',
+        };
+
+        // Only add filters if specific sources are selected
+        if (conversionSourceIds.length > 0) {
+          body.filters = { sourceIds: conversionSourceIds };
+        }
 
         const response = await this.helpers.httpRequest({
           method: 'POST',
@@ -71,12 +124,7 @@ export class CortanaAiTrigger implements INodeType {
             Authorization: `Bearer ${credentials.apiKey as string}`,
             'Content-Type': 'application/json',
           },
-          body: {
-            businessId: credentials.businessId as string,
-            targetUrl: webhookUrl,
-            events,
-            platform: 'n8n',
-          },
+          body,
         });
 
         const webhookData = this.getWorkflowStaticData('node');

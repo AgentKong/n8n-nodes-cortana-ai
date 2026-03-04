@@ -3,6 +3,8 @@ export declare class CortanaAi implements INodeType {
     description: INodeTypeDescription;
     methods: {
         loadOptions: {
+            getConversionSources(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]>;
+            getSourceFieldKeys(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]>;
             getConversionTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]>;
         };
     };
