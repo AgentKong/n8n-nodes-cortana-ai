@@ -5,7 +5,8 @@ class CortanaAiApi {
     constructor() {
         this.name = 'cortanaAiApi';
         this.displayName = 'Cortana AI API';
-        this.documentationUrl = 'https://app.agentkong.ai/docs/api';
+        this.documentationUrl = 'httpsAppAgentkongAiDocsApi';
+        this.icon = 'file:cortana-ai.svg';
         this.properties = [
             {
                 displayName: 'API Key',
@@ -25,6 +26,14 @@ class CortanaAiApi {
                 description: 'Your Cortana AI Business ID. Find it in the URL when viewing business settings.',
             },
         ];
+        this.authenticate = {
+            type: 'generic',
+            properties: {
+                headers: {
+                    Authorization: '=Bearer {{$credentials.apiKey}}',
+                },
+            },
+        };
         this.test = {
             request: {
                 baseURL: 'https://app.agentkong.ai',
@@ -32,9 +41,6 @@ class CortanaAiApi {
                 method: 'GET',
                 qs: {
                     businessId: '={{$credentials.businessId}}',
-                },
-                headers: {
-                    Authorization: '=Bearer {{$credentials.apiKey}}',
                 },
             },
         };

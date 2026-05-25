@@ -1,21 +1,35 @@
 import type {
   IDataObject,
   IExecuteFunctions,
+  IHttpRequestOptions,
   INodeExecutionData,
   INodeType,
   INodeTypeDescription,
   ILoadOptionsFunctions,
   INodePropertyOptions,
+  JsonObject,
 } from 'n8n-workflow';
-import { NodeApiError, NodeOperationError } from 'n8n-workflow';
+import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
 const BASE_URL = 'https://app.agentkong.ai/api/v1';
+
+// Hard upper bound on how many pages we will follow when "Return All" is enabled,
+// so a runaway dataset cannot hang the workflow forever.
+const MAX_PAGES = 100;
+const PAGE_SIZE = 100;
 
 // Keys in fieldMappings that are internal config, not actual source→target field mappings
 const MAPPING_SKIP_KEYS = new Set([
   'config', 'webhookId', 'webhookTopic', 'pageTokens', 'ghlEventType', 'ghlLocationId',
   'formId', 'typeformFormId', 'whopConnectionId',
 ]);
+
+async function cortanaRequest(
+  context: IExecuteFunctions | ILoadOptionsFunctions,
+  options: IHttpRequestOptions,
+): Promise<unknown> {
+  return context.helpers.httpRequestWithAuthentication.call(context, 'cortanaAiApi', options);
+}
 
 export class CortanaAi implements INodeType {
   description: INodeTypeDescription = {
@@ -27,8 +41,8 @@ export class CortanaAi implements INodeType {
     subtitle: '={{$parameter["operation"]}}',
     description: 'Create conversions and manage data in Cortana AI',
     defaults: { name: 'Cortana AI' },
-    inputs: ['main'],
-    outputs: ['main'],
+    inputs: [NodeConnectionTypes.Main],
+    outputs: [NodeConnectionTypes.Main],
     credentials: [
       {
         name: 'cortanaAiApi',
@@ -43,8 +57,8 @@ export class CortanaAi implements INodeType {
         type: 'options',
         noDataExpression: true,
         options: [
-          { name: 'Conversion', value: 'conversion' },
           { name: 'Contact', value: 'contact' },
+          { name: 'Conversion', value: 'conversion' },
           { name: 'Conversion Type', value: 'conversionType' },
         ],
         default: 'conversion',
@@ -143,7 +157,7 @@ export class CortanaAi implements INodeType {
             displayName: 'Field',
             values: [
               {
-                displayName: 'Field Name',
+                displayName: 'Field Name or ID',
                 name: 'key',
                 type: 'options',
                 typeOptions: {
@@ -151,7 +165,7 @@ export class CortanaAi implements INodeType {
                   loadOptionsDependsOn: ['conversionSourceId'],
                 },
                 default: '',
-                description: 'The source field name (as configured in Cortana AI field mappings)',
+                description: 'The source field name (as configured in Cortana AI field mappings). Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
               },
               {
                 displayName: 'Value',
@@ -175,13 +189,6 @@ export class CortanaAi implements INodeType {
         default: {},
         options: [
           {
-            displayName: 'Revenue',
-            name: 'revenue',
-            type: 'number',
-            default: 0,
-            description: 'Revenue value (e.g. 99.99)',
-          },
-          {
             displayName: 'Currency',
             name: 'currency',
             type: 'string',
@@ -189,18 +196,17 @@ export class CortanaAi implements INodeType {
             description: 'ISO 4217 currency code (e.g. USD, EUR, GBP)',
           },
           {
-            displayName: 'UTM Source',
-            name: 'utmSource',
+            displayName: 'Note',
+            name: 'note',
             type: 'string',
             default: '',
-            description: 'Traffic source (e.g. facebook, google)',
           },
           {
-            displayName: 'UTM Medium',
-            name: 'utmMedium',
-            type: 'string',
-            default: '',
-            description: 'Marketing medium (e.g. cpc, email)',
+            displayName: 'Revenue',
+            name: 'revenue',
+            type: 'number',
+            default: 0,
+            description: 'Revenue value (e.g. 99.99)',
           },
           {
             displayName: 'UTM Campaign',
@@ -216,14 +222,22 @@ export class CortanaAi implements INodeType {
             default: '',
           },
           {
-            displayName: 'UTM Term',
-            name: 'utmTerm',
+            displayName: 'UTM Medium',
+            name: 'utmMedium',
             type: 'string',
             default: '',
+            description: 'Marketing medium (e.g. cpc, email)',
           },
           {
-            displayName: 'Note',
-            name: 'note',
+            displayName: 'UTM Source',
+            name: 'utmSource',
+            type: 'string',
+            default: '',
+            description: 'Traffic source (e.g. facebook, google)',
+          },
+          {
+            displayName: 'UTM Term',
+            name: 'utmTerm',
             type: 'string',
             default: '',
           },
@@ -321,6 +335,7 @@ export class CortanaAi implements INodeType {
             displayName: 'Email',
             name: 'email',
             type: 'string',
+												placeholder: 'name@email.com',
             default: '',
             description: 'Search by email instead of or in addition to phone',
           },
@@ -335,9 +350,9 @@ export class CortanaAi implements INodeType {
             displayName: 'Limit',
             name: 'limit',
             type: 'number',
-            typeOptions: { minValue: 1, maxValue: 100 },
-            default: 20,
-            description: 'Max number of contacts to return',
+            typeOptions: { minValue: 1 },
+            default: 50,
+            description: 'Max number of results to return',
           },
         ],
       },
@@ -348,15 +363,11 @@ export class CortanaAi implements INodeType {
     loadOptions: {
       async getConversionSources(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const credentials = await this.getCredentials('cortanaAiApi');
-        const response = await this.helpers.httpRequest({
+        const response = (await cortanaRequest(this, {
           method: 'GET',
           url: `${BASE_URL}/conversion-sources`,
-          headers: {
-            Authorization: `Bearer ${credentials.apiKey as string}`,
-            'Content-Type': 'application/json',
-          },
           qs: { businessId: credentials.businessId as string },
-        });
+        })) as IDataObject;
         return (response.data as IDataObject[]).map((source: IDataObject) => {
           const configName = (source.conversionConfig as IDataObject)?.displayName ?? (source.conversionConfig as IDataObject)?.name ?? '';
           // Encode both sourceId and conversionConfigId in the value so execute can use both
@@ -375,15 +386,11 @@ export class CortanaAi implements INodeType {
         if (!encodedSourceId) return [];
         const sourceId = encodedSourceId.split('__')[0];
 
-        const response = await this.helpers.httpRequest({
+        const response = (await cortanaRequest(this, {
           method: 'GET',
           url: `${BASE_URL}/conversion-sources`,
-          headers: {
-            Authorization: `Bearer ${credentials.apiKey as string}`,
-            'Content-Type': 'application/json',
-          },
           qs: { businessId: credentials.businessId as string },
-        });
+        })) as IDataObject;
 
         const sources = response.data as IDataObject[];
         const selectedSource = sources.find((s: IDataObject) => s.id === sourceId);
@@ -407,15 +414,11 @@ export class CortanaAi implements INodeType {
 
       async getConversionTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const credentials = await this.getCredentials('cortanaAiApi');
-        const response = await this.helpers.httpRequest({
+        const response = (await cortanaRequest(this, {
           method: 'GET',
           url: `${BASE_URL}/conversion-types`,
-          headers: {
-            Authorization: `Bearer ${credentials.apiKey as string}`,
-            'Content-Type': 'application/json',
-          },
           qs: { businessId: credentials.businessId as string },
-        });
+        })) as IDataObject;
         return (response.data as IDataObject[]).map((ct: IDataObject) => ({
           name: ct.name as string,
           value: ct.id as string,
@@ -426,7 +429,6 @@ export class CortanaAi implements INodeType {
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const credentials = await this.getCredentials('cortanaAiApi');
-    const apiKey = credentials.apiKey as string;
     const businessId = credentials.businessId as string;
 
     const items = this.getInputData();
@@ -465,42 +467,61 @@ export class CortanaAi implements INodeType {
               ...additionalFields,
             };
 
-            const result = await this.helpers.httpRequest({
+            const result = await cortanaRequest(this, {
               method: 'POST',
               url: `${BASE_URL}/conversions`,
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-              },
               body,
+              json: true,
             });
             returnData.push({ json: result as IDataObject, pairedItem: { item: i } });
           }
 
           if (operation === 'getMany') {
             const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-            const limit = returnAll ? 100 : (this.getNodeParameter('limit', i) as number);
             const filters = this.getNodeParameter('filters', i) as IDataObject;
 
-            const result = await this.helpers.httpRequest({
-              method: 'GET',
-              url: `${BASE_URL}/conversions`,
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-              },
-              qs: {
-                businessId,
-                limit,
-                ...(filters.since && { since: filters.since }),
-                ...(filters.type && { type: filters.type }),
-                ...(filters.contactEmail && { contactEmail: filters.contactEmail }),
-                ...(filters.contactPhone && { contactPhone: filters.contactPhone }),
-              },
-            });
-            const entries = ((result as IDataObject).data as IDataObject[]) || [];
-            for (const entry of entries) {
-              returnData.push({ json: entry, pairedItem: { item: i } });
+            const baseQs: IDataObject = {
+              businessId,
+              ...(filters.since && { since: filters.since }),
+              ...(filters.type && { type: filters.type }),
+              ...(filters.contactEmail && { contactEmail: filters.contactEmail }),
+              ...(filters.contactPhone && { contactPhone: filters.contactPhone }),
+            };
+
+            if (returnAll) {
+              // Follow cursor pagination until the server reports no more pages
+              // (capped at MAX_PAGES to prevent runaway loops).
+              let cursor: string | undefined;
+              let pages = 0;
+              do {
+                const result = (await cortanaRequest(this, {
+                  method: 'GET',
+                  url: `${BASE_URL}/conversions`,
+                  qs: {
+                    ...baseQs,
+                    limit: PAGE_SIZE,
+                    ...(cursor ? { cursor } : {}),
+                  },
+                })) as IDataObject;
+                const entries = (result.data as IDataObject[]) ?? [];
+                for (const entry of entries) {
+                  returnData.push({ json: entry, pairedItem: { item: i } });
+                }
+                const pagination = result.pagination as IDataObject | undefined;
+                cursor = pagination?.hasMore ? (pagination.cursor as string | undefined) : undefined;
+                pages++;
+              } while (cursor && pages < MAX_PAGES);
+            } else {
+              const limit = this.getNodeParameter('limit', i) as number;
+              const result = (await cortanaRequest(this, {
+                method: 'GET',
+                url: `${BASE_URL}/conversions`,
+                qs: { ...baseQs, limit },
+              })) as IDataObject;
+              const entries = (result.data as IDataObject[]) ?? [];
+              for (const entry of entries) {
+                returnData.push({ json: entry, pairedItem: { item: i } });
+              }
             }
           }
         }
@@ -516,16 +537,12 @@ export class CortanaAi implements INodeType {
               throw new NodeOperationError(this.getNode(), 'Provide at least a Phone Number to search contacts', { itemIndex: i });
             }
 
-            const result = await this.helpers.httpRequest({
+            const result = (await cortanaRequest(this, {
               method: 'GET',
               url: `${BASE_URL}/contacts`,
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-              },
               qs: { businessId, search: searchTerm, limit },
-            });
-            const contacts = ((result as IDataObject).data as IDataObject[]) || [];
+            })) as IDataObject;
+            const contacts = (result.data as IDataObject[]) ?? [];
             for (const contact of contacts) {
               returnData.push({ json: contact, pairedItem: { item: i } });
             }
@@ -534,16 +551,12 @@ export class CortanaAi implements INodeType {
 
         if (resource === 'conversionType') {
           if (operation === 'getMany') {
-            const result = await this.helpers.httpRequest({
+            const result = (await cortanaRequest(this, {
               method: 'GET',
               url: `${BASE_URL}/conversion-types`,
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-              },
               qs: { businessId },
-            });
-            const types = ((result as IDataObject).data as IDataObject[]) || [];
+            })) as IDataObject;
+            const types = (result.data as IDataObject[]) ?? [];
             for (const type of types) {
               returnData.push({ json: type, pairedItem: { item: i } });
             }
@@ -555,8 +568,7 @@ export class CortanaAi implements INodeType {
           continue;
         }
         if (error instanceof NodeOperationError) throw error;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        throw new NodeApiError(this.getNode(), error as any);
+        throw new NodeApiError(this.getNode(), error as JsonObject);
       }
     }
 

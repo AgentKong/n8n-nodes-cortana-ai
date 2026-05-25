@@ -1,0 +1,22 @@
+{
+  "node": "n8n-nodes-cortana-ai.cortanaAi",
+  "nodeVersion": "1.0",
+  "codexVersion": "1.0",
+  "categories": [
+    "Marketing",
+    "Sales",
+    "Analytics"
+  ],
+  "resources": {
+    "credentialDocumentation": [
+      {
+        "url": "https://app.agentkong.ai/docs/api"
+      }
+    ],
+    "primaryDocumentation": [
+      {
+        "url": "https://app.agentkong.ai/docs/api"
+      }
+    ]
+  }
+}

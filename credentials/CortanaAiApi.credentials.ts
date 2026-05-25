@@ -1,9 +1,15 @@
-import type { ICredentialTestRequest, ICredentialType, INodeProperties } from 'n8n-workflow';
+import type {
+  IAuthenticateGeneric,
+  ICredentialTestRequest,
+  ICredentialType,
+  INodeProperties,
+} from 'n8n-workflow';
 
 export class CortanaAiApi implements ICredentialType {
   name = 'cortanaAiApi';
   displayName = 'Cortana AI API';
-  documentationUrl = 'https://app.agentkong.ai/docs/api';
+  documentationUrl = 'httpsAppAgentkongAiDocsApi';
+  icon = 'file:cortana-ai.svg' as const;
   properties: INodeProperties[] = [
     {
       displayName: 'API Key',
@@ -26,6 +32,15 @@ export class CortanaAiApi implements ICredentialType {
     },
   ];
 
+  authenticate: IAuthenticateGeneric = {
+    type: 'generic',
+    properties: {
+      headers: {
+        Authorization: '=Bearer {{$credentials.apiKey}}',
+      },
+    },
+  };
+
   test: ICredentialTestRequest = {
     request: {
       baseURL: 'https://app.agentkong.ai',
@@ -33,9 +48,6 @@ export class CortanaAiApi implements ICredentialType {
       method: 'GET',
       qs: {
         businessId: '={{$credentials.businessId}}',
-      },
-      headers: {
-        Authorization: '=Bearer {{$credentials.apiKey}}',
       },
     },
   };

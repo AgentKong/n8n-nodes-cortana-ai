@@ -3,11 +3,18 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CortanaAi = void 0;
 const n8n_workflow_1 = require("n8n-workflow");
 const BASE_URL = 'https://app.agentkong.ai/api/v1';
+// Hard upper bound on how many pages we will follow when "Return All" is enabled,
+// so a runaway dataset cannot hang the workflow forever.
+const MAX_PAGES = 100;
+const PAGE_SIZE = 100;
 // Keys in fieldMappings that are internal config, not actual source→target field mappings
 const MAPPING_SKIP_KEYS = new Set([
     'config', 'webhookId', 'webhookTopic', 'pageTokens', 'ghlEventType', 'ghlLocationId',
     'formId', 'typeformFormId', 'whopConnectionId',
 ]);
+async function cortanaRequest(context, options) {
+    return context.helpers.httpRequestWithAuthentication.call(context, 'cortanaAiApi', options);
+}
 class CortanaAi {
     constructor() {
         this.description = {
@@ -19,8 +26,8 @@ class CortanaAi {
             subtitle: '={{$parameter["operation"]}}',
             description: 'Create conversions and manage data in Cortana AI',
             defaults: { name: 'Cortana AI' },
-            inputs: ['main'],
-            outputs: ['main'],
+            inputs: [n8n_workflow_1.NodeConnectionTypes.Main],
+            outputs: [n8n_workflow_1.NodeConnectionTypes.Main],
             credentials: [
                 {
                     name: 'cortanaAiApi',
@@ -35,8 +42,8 @@ class CortanaAi {
                     type: 'options',
                     noDataExpression: true,
                     options: [
-                        { name: 'Conversion', value: 'conversion' },
                         { name: 'Contact', value: 'contact' },
+                        { name: 'Conversion', value: 'conversion' },
                         { name: 'Conversion Type', value: 'conversionType' },
                     ],
                     default: 'conversion',
@@ -130,7 +137,7 @@ class CortanaAi {
                             displayName: 'Field',
                             values: [
                                 {
-                                    displayName: 'Field Name',
+                                    displayName: 'Field Name or ID',
                                     name: 'key',
                                     type: 'options',
                                     typeOptions: {
@@ -138,7 +145,7 @@ class CortanaAi {
                                         loadOptionsDependsOn: ['conversionSourceId'],
                                     },
                                     default: '',
-                                    description: 'The source field name (as configured in Cortana AI field mappings)',
+                                    description: 'The source field name (as configured in Cortana AI field mappings). Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
                                 },
                                 {
                                     displayName: 'Value',
@@ -162,13 +169,6 @@ class CortanaAi {
                     default: {},
                     options: [
                         {
-                            displayName: 'Revenue',
-                            name: 'revenue',
-                            type: 'number',
-                            default: 0,
-                            description: 'Revenue value (e.g. 99.99)',
-                        },
-                        {
                             displayName: 'Currency',
                             name: 'currency',
                             type: 'string',
@@ -176,18 +176,17 @@ class CortanaAi {
                             description: 'ISO 4217 currency code (e.g. USD, EUR, GBP)',
                         },
                         {
-                            displayName: 'UTM Source',
-                            name: 'utmSource',
+                            displayName: 'Note',
+                            name: 'note',
                             type: 'string',
                             default: '',
-                            description: 'Traffic source (e.g. facebook, google)',
                         },
                         {
-                            displayName: 'UTM Medium',
-                            name: 'utmMedium',
-                            type: 'string',
-                            default: '',
-                            description: 'Marketing medium (e.g. cpc, email)',
+                            displayName: 'Revenue',
+                            name: 'revenue',
+                            type: 'number',
+                            default: 0,
+                            description: 'Revenue value (e.g. 99.99)',
                         },
                         {
                             displayName: 'UTM Campaign',
@@ -203,14 +202,22 @@ class CortanaAi {
                             default: '',
                         },
                         {
-                            displayName: 'UTM Term',
-                            name: 'utmTerm',
+                            displayName: 'UTM Medium',
+                            name: 'utmMedium',
                             type: 'string',
                             default: '',
+                            description: 'Marketing medium (e.g. cpc, email)',
                         },
                         {
-                            displayName: 'Note',
-                            name: 'note',
+                            displayName: 'UTM Source',
+                            name: 'utmSource',
+                            type: 'string',
+                            default: '',
+                            description: 'Traffic source (e.g. facebook, google)',
+                        },
+                        {
+                            displayName: 'UTM Term',
+                            name: 'utmTerm',
                             type: 'string',
                             default: '',
                         },
@@ -306,6 +313,7 @@ class CortanaAi {
                             displayName: 'Email',
                             name: 'email',
                             type: 'string',
+                            placeholder: 'name@email.com',
                             default: '',
                             description: 'Search by email instead of or in addition to phone',
                         },
@@ -320,9 +328,9 @@ class CortanaAi {
                             displayName: 'Limit',
                             name: 'limit',
                             type: 'number',
-                            typeOptions: { minValue: 1, maxValue: 100 },
-                            default: 20,
-                            description: 'Max number of contacts to return',
+                            typeOptions: { minValue: 1 },
+                            default: 50,
+                            description: 'Max number of results to return',
                         },
                     ],
                 },
@@ -332,15 +340,11 @@ class CortanaAi {
             loadOptions: {
                 async getConversionSources() {
                     const credentials = await this.getCredentials('cortanaAiApi');
-                    const response = await this.helpers.httpRequest({
+                    const response = (await cortanaRequest(this, {
                         method: 'GET',
                         url: `${BASE_URL}/conversion-sources`,
-                        headers: {
-                            Authorization: `Bearer ${credentials.apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
                         qs: { businessId: credentials.businessId },
-                    });
+                    }));
                     return response.data.map((source) => {
                         var _a, _b, _c, _d;
                         const configName = (_d = (_b = (_a = source.conversionConfig) === null || _a === void 0 ? void 0 : _a.displayName) !== null && _b !== void 0 ? _b : (_c = source.conversionConfig) === null || _c === void 0 ? void 0 : _c.name) !== null && _d !== void 0 ? _d : '';
@@ -359,15 +363,11 @@ class CortanaAi {
                     if (!encodedSourceId)
                         return [];
                     const sourceId = encodedSourceId.split('__')[0];
-                    const response = await this.helpers.httpRequest({
+                    const response = (await cortanaRequest(this, {
                         method: 'GET',
                         url: `${BASE_URL}/conversion-sources`,
-                        headers: {
-                            Authorization: `Bearer ${credentials.apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
                         qs: { businessId: credentials.businessId },
-                    });
+                    }));
                     const sources = response.data;
                     const selectedSource = sources.find((s) => s.id === sourceId);
                     if (!selectedSource || !selectedSource.fieldMappings)
@@ -388,15 +388,11 @@ class CortanaAi {
                 },
                 async getConversionTypes() {
                     const credentials = await this.getCredentials('cortanaAiApi');
-                    const response = await this.helpers.httpRequest({
+                    const response = (await cortanaRequest(this, {
                         method: 'GET',
                         url: `${BASE_URL}/conversion-types`,
-                        headers: {
-                            Authorization: `Bearer ${credentials.apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
                         qs: { businessId: credentials.businessId },
-                    });
+                    }));
                     return response.data.map((ct) => ({
                         name: ct.name,
                         value: ct.id,
@@ -406,9 +402,8 @@ class CortanaAi {
         };
     }
     async execute() {
-        var _a;
+        var _a, _b, _c, _d, _e;
         const credentials = await this.getCredentials('cortanaAiApi');
-        const apiKey = credentials.apiKey;
         const businessId = credentials.businessId;
         const items = this.getInputData();
         const returnData = [];
@@ -440,40 +435,59 @@ class CortanaAi {
                             ...sourceFieldData,
                             ...additionalFields,
                         };
-                        const result = await this.helpers.httpRequest({
+                        const result = await cortanaRequest(this, {
                             method: 'POST',
                             url: `${BASE_URL}/conversions`,
-                            headers: {
-                                Authorization: `Bearer ${apiKey}`,
-                                'Content-Type': 'application/json',
-                            },
                             body,
+                            json: true,
                         });
                         returnData.push({ json: result, pairedItem: { item: i } });
                     }
                     if (operation === 'getMany') {
                         const returnAll = this.getNodeParameter('returnAll', i);
-                        const limit = returnAll ? 100 : this.getNodeParameter('limit', i);
                         const filters = this.getNodeParameter('filters', i);
-                        const result = await this.helpers.httpRequest({
-                            method: 'GET',
-                            url: `${BASE_URL}/conversions`,
-                            headers: {
-                                Authorization: `Bearer ${apiKey}`,
-                                'Content-Type': 'application/json',
-                            },
-                            qs: {
-                                businessId,
-                                limit,
-                                ...(filters.since && { since: filters.since }),
-                                ...(filters.type && { type: filters.type }),
-                                ...(filters.contactEmail && { contactEmail: filters.contactEmail }),
-                                ...(filters.contactPhone && { contactPhone: filters.contactPhone }),
-                            },
-                        });
-                        const entries = result.data || [];
-                        for (const entry of entries) {
-                            returnData.push({ json: entry, pairedItem: { item: i } });
+                        const baseQs = {
+                            businessId,
+                            ...(filters.since && { since: filters.since }),
+                            ...(filters.type && { type: filters.type }),
+                            ...(filters.contactEmail && { contactEmail: filters.contactEmail }),
+                            ...(filters.contactPhone && { contactPhone: filters.contactPhone }),
+                        };
+                        if (returnAll) {
+                            // Follow cursor pagination until the server reports no more pages
+                            // (capped at MAX_PAGES to prevent runaway loops).
+                            let cursor;
+                            let pages = 0;
+                            do {
+                                const result = (await cortanaRequest(this, {
+                                    method: 'GET',
+                                    url: `${BASE_URL}/conversions`,
+                                    qs: {
+                                        ...baseQs,
+                                        limit: PAGE_SIZE,
+                                        ...(cursor ? { cursor } : {}),
+                                    },
+                                }));
+                                const entries = (_a = result.data) !== null && _a !== void 0 ? _a : [];
+                                for (const entry of entries) {
+                                    returnData.push({ json: entry, pairedItem: { item: i } });
+                                }
+                                const pagination = result.pagination;
+                                cursor = (pagination === null || pagination === void 0 ? void 0 : pagination.hasMore) ? pagination.cursor : undefined;
+                                pages++;
+                            } while (cursor && pages < MAX_PAGES);
+                        }
+                        else {
+                            const limit = this.getNodeParameter('limit', i);
+                            const result = (await cortanaRequest(this, {
+                                method: 'GET',
+                                url: `${BASE_URL}/conversions`,
+                                qs: { ...baseQs, limit },
+                            }));
+                            const entries = (_b = result.data) !== null && _b !== void 0 ? _b : [];
+                            for (const entry of entries) {
+                                returnData.push({ json: entry, pairedItem: { item: i } });
+                            }
                         }
                     }
                 }
@@ -481,21 +495,17 @@ class CortanaAi {
                     if (operation === 'search') {
                         const phone = this.getNodeParameter('phone', i);
                         const contactSearchFields = this.getNodeParameter('contactSearchFields', i);
-                        const limit = (_a = contactSearchFields.limit) !== null && _a !== void 0 ? _a : 20;
+                        const limit = (_c = contactSearchFields.limit) !== null && _c !== void 0 ? _c : 20;
                         const searchTerm = phone || contactSearchFields.email || contactSearchFields.name || '';
                         if (!searchTerm) {
                             throw new n8n_workflow_1.NodeOperationError(this.getNode(), 'Provide at least a Phone Number to search contacts', { itemIndex: i });
                         }
-                        const result = await this.helpers.httpRequest({
+                        const result = (await cortanaRequest(this, {
                             method: 'GET',
                             url: `${BASE_URL}/contacts`,
-                            headers: {
-                                Authorization: `Bearer ${apiKey}`,
-                                'Content-Type': 'application/json',
-                            },
                             qs: { businessId, search: searchTerm, limit },
-                        });
-                        const contacts = result.data || [];
+                        }));
+                        const contacts = (_d = result.data) !== null && _d !== void 0 ? _d : [];
                         for (const contact of contacts) {
                             returnData.push({ json: contact, pairedItem: { item: i } });
                         }
@@ -503,16 +513,12 @@ class CortanaAi {
                 }
                 if (resource === 'conversionType') {
                     if (operation === 'getMany') {
-                        const result = await this.helpers.httpRequest({
+                        const result = (await cortanaRequest(this, {
                             method: 'GET',
                             url: `${BASE_URL}/conversion-types`,
-                            headers: {
-                                Authorization: `Bearer ${apiKey}`,
-                                'Content-Type': 'application/json',
-                            },
                             qs: { businessId },
-                        });
-                        const types = result.data || [];
+                        }));
+                        const types = (_e = result.data) !== null && _e !== void 0 ? _e : [];
                         for (const type of types) {
                             returnData.push({ json: type, pairedItem: { item: i } });
                         }
@@ -526,7 +532,6 @@ class CortanaAi {
                 }
                 if (error instanceof n8n_workflow_1.NodeOperationError)
                     throw error;
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 throw new n8n_workflow_1.NodeApiError(this.getNode(), error);
             }
         }

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CortanaAiTrigger = void 0;
+const n8n_workflow_1 = require("n8n-workflow");
 const BASE_URL = 'https://app.agentkong.ai/api/v1';
 class CortanaAiTrigger {
     constructor() {
@@ -13,7 +14,7 @@ class CortanaAiTrigger {
             description: 'Starts the workflow when a new conversion is recorded in Cortana AI',
             defaults: { name: 'Cortana AI Trigger' },
             inputs: [],
-            outputs: ['main'],
+            outputs: [n8n_workflow_1.NodeConnectionTypes.Main],
             credentials: [
                 {
                     name: 'cortanaAiApi',
@@ -51,7 +52,7 @@ class CortanaAiTrigger {
                         loadOptionsMethod: 'getConversionSources',
                     },
                     default: [],
-                    description: 'Only trigger when a conversion is recorded from these sources. Leave empty to trigger for all sources.',
+                    description: 'Only trigger when a conversion is recorded from these sources. Leave empty to trigger for all sources. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
                 },
             ],
         };
@@ -59,15 +60,11 @@ class CortanaAiTrigger {
             loadOptions: {
                 async getConversionSources() {
                     const credentials = await this.getCredentials('cortanaAiApi');
-                    const response = await this.helpers.httpRequest({
+                    const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'cortanaAiApi', {
                         method: 'GET',
                         url: `${BASE_URL}/conversion-sources`,
-                        headers: {
-                            Authorization: `Bearer ${credentials.apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
                         qs: { businessId: credentials.businessId },
-                    });
+                    }));
                     return response.data.map((source) => {
                         var _a, _b, _c, _d;
                         const configName = (_d = (_b = (_a = source.conversionConfig) === null || _a === void 0 ? void 0 : _a.displayName) !== null && _b !== void 0 ? _b : (_c = source.conversionConfig) === null || _c === void 0 ? void 0 : _c.name) !== null && _d !== void 0 ? _d : '';
@@ -100,22 +97,16 @@ class CortanaAiTrigger {
                     if (conversionSourceIds.length > 0) {
                         body.filters = { sourceIds: conversionSourceIds };
                     }
-                    const response = await this.helpers.httpRequest({
+                    const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'cortanaAiApi', {
                         method: 'POST',
                         url: `${BASE_URL}/webhooks/subscribe`,
-                        headers: {
-                            Authorization: `Bearer ${credentials.apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
                         body,
-                    });
+                        json: true,
+                    }));
                     const webhookData = this.getWorkflowStaticData('node');
-                    webhookData.subscriptionId = response.data
-                        ? response.data.subscriptionId
-                        : undefined;
-                    webhookData.signingSecret = response.data
-                        ? response.data.signingSecret
-                        : undefined;
+                    const data = response.data;
+                    webhookData.subscriptionId = data === null || data === void 0 ? void 0 : data.subscriptionId;
+                    webhookData.signingSecret = data === null || data === void 0 ? void 0 : data.signingSecret;
                     return true;
                 },
                 async delete() {
@@ -123,17 +114,14 @@ class CortanaAiTrigger {
                     const webhookData = this.getWorkflowStaticData('node');
                     if (!webhookData.subscriptionId)
                         return true;
-                    await this.helpers.httpRequest({
+                    await this.helpers.httpRequestWithAuthentication.call(this, 'cortanaAiApi', {
                         method: 'DELETE',
                         url: `${BASE_URL}/webhooks/unsubscribe`,
-                        headers: {
-                            Authorization: `Bearer ${credentials.apiKey}`,
-                            'Content-Type': 'application/json',
-                        },
                         body: {
                             businessId: credentials.businessId,
                             subscriptionId: webhookData.subscriptionId,
                         },
+                        json: true,
                     });
                     delete webhookData.subscriptionId;
                     delete webhookData.signingSecret;

@@ -8,6 +8,7 @@ import type {
   ILoadOptionsFunctions,
   INodePropertyOptions,
 } from 'n8n-workflow';
+import { NodeConnectionTypes } from 'n8n-workflow';
 
 const BASE_URL = 'https://app.agentkong.ai/api/v1';
 
@@ -21,7 +22,7 @@ export class CortanaAiTrigger implements INodeType {
     description: 'Starts the workflow when a new conversion is recorded in Cortana AI',
     defaults: { name: 'Cortana AI Trigger' },
     inputs: [],
-    outputs: ['main'],
+    outputs: [NodeConnectionTypes.Main],
     credentials: [
       {
         name: 'cortanaAiApi',
@@ -59,8 +60,7 @@ export class CortanaAiTrigger implements INodeType {
           loadOptionsMethod: 'getConversionSources',
         },
         default: [],
-        description:
-          'Only trigger when a conversion is recorded from these sources. Leave empty to trigger for all sources.',
+        description: 'Only trigger when a conversion is recorded from these sources. Leave empty to trigger for all sources. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
     ],
   };
@@ -69,15 +69,15 @@ export class CortanaAiTrigger implements INodeType {
     loadOptions: {
       async getConversionSources(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const credentials = await this.getCredentials('cortanaAiApi');
-        const response = await this.helpers.httpRequest({
-          method: 'GET',
-          url: `${BASE_URL}/conversion-sources`,
-          headers: {
-            Authorization: `Bearer ${credentials.apiKey as string}`,
-            'Content-Type': 'application/json',
+        const response = (await this.helpers.httpRequestWithAuthentication.call(
+          this,
+          'cortanaAiApi',
+          {
+            method: 'GET',
+            url: `${BASE_URL}/conversion-sources`,
+            qs: { businessId: credentials.businessId as string },
           },
-          qs: { businessId: credentials.businessId as string },
-        });
+        )) as IDataObject;
         return (response.data as IDataObject[]).map((source: IDataObject) => {
           const configName =
             (source.conversionConfig as IDataObject)?.displayName ??
@@ -117,23 +117,21 @@ export class CortanaAiTrigger implements INodeType {
           body.filters = { sourceIds: conversionSourceIds };
         }
 
-        const response = await this.helpers.httpRequest({
-          method: 'POST',
-          url: `${BASE_URL}/webhooks/subscribe`,
-          headers: {
-            Authorization: `Bearer ${credentials.apiKey as string}`,
-            'Content-Type': 'application/json',
+        const response = (await this.helpers.httpRequestWithAuthentication.call(
+          this,
+          'cortanaAiApi',
+          {
+            method: 'POST',
+            url: `${BASE_URL}/webhooks/subscribe`,
+            body,
+            json: true,
           },
-          body,
-        });
+        )) as IDataObject;
 
         const webhookData = this.getWorkflowStaticData('node');
-        webhookData.subscriptionId = (response as IDataObject).data
-          ? ((response as IDataObject).data as IDataObject).subscriptionId
-          : undefined;
-        webhookData.signingSecret = (response as IDataObject).data
-          ? ((response as IDataObject).data as IDataObject).signingSecret
-          : undefined;
+        const data = response.data as IDataObject | undefined;
+        webhookData.subscriptionId = data?.subscriptionId;
+        webhookData.signingSecret = data?.signingSecret;
 
         return true;
       },
@@ -144,17 +142,14 @@ export class CortanaAiTrigger implements INodeType {
 
         if (!webhookData.subscriptionId) return true;
 
-        await this.helpers.httpRequest({
+        await this.helpers.httpRequestWithAuthentication.call(this, 'cortanaAiApi', {
           method: 'DELETE',
           url: `${BASE_URL}/webhooks/unsubscribe`,
-          headers: {
-            Authorization: `Bearer ${credentials.apiKey as string}`,
-            'Content-Type': 'application/json',
-          },
           body: {
             businessId: credentials.businessId as string,
             subscriptionId: webhookData.subscriptionId as string,
           },
+          json: true,
         });
 
         delete webhookData.subscriptionId;
