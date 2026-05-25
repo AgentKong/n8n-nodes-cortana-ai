@@ -1,0 +1,77 @@
+name: Release
+
+# Publishes the package to npm with provenance whenever a v*.*.* tag is pushed.
+# Can also be triggered manually from the Actions tab.
+#
+# Setup required (one-time):
+#   1. Create a granular access token on npmjs.com:
+#        - Permissions: Read and write
+#        - Selected packages: n8n-nodes-cortana-ai
+#        - Allow access without 2FA: ENABLED
+#   2. Add it as the NPM_TOKEN secret in this repo
+#      (Settings → Secrets and variables → Actions → New repository secret).
+#
+# Release flow:
+#   1. Bump the version in package.json on main (e.g. 0.1.12 → 0.1.13).
+#   2. Commit and push main.
+#   3. Tag the commit: git tag v0.1.13 && git push origin v0.1.13
+#   4. This workflow runs and publishes with provenance.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (e.g. v0.1.13). Must already exist on the repo.'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write  # required for npm provenance via OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_NAME="${GITHUB_REF_NAME#refs/tags/}"
+          # workflow_dispatch passes the tag via inputs instead of GITHUB_REF_NAME
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME="${{ github.event.inputs.tag }}"
+          fi
+          EXPECTED="v${PKG_VERSION}"
+          if [ "$TAG_NAME" != "$EXPECTED" ]; then
+            echo "Tag $TAG_NAME does not match package.json version $EXPECTED" >&2
+            exit 1
+          fi
+          echo "Tag $TAG_NAME matches package.json $EXPECTED"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm with provenance
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
