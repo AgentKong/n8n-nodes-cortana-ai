@@ -1,7 +1,7 @@
 {
   "name": "n8n-nodes-cortana-ai",
-  "version": "0.1.14",
-  "description": "Cortana AI community node for n8n — receive and create conversions with full attribution data.",
+  "version": "0.2.1",
+  "description": "Cortana AI community node for n8n — trigger on new conversions/contacts and create conversions with full attribution.",
   "keywords": [
     "n8n-community-node-package",
     "cortana-ai",

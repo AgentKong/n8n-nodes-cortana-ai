@@ -1,29 +1,37 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CortanaAiApi = void 0;
+/**
+ * Cortana AI API credentials — v0.2 (scoped API).
+ *
+ * API key ONLY: one credential covers every business the key can reach; the
+ * business is chosen per node instance (the businessId dropdown). Keys are
+ * created at Control Center → Settings → API Keys with scopes:
+ * contacts:read, contacts:write, conversions:read, conversions:write,
+ * webhooks:read, webhooks:write.
+ */
 class CortanaAiApi {
     constructor() {
         this.name = 'cortanaAiApi';
         this.displayName = 'Cortana AI API';
-        this.documentationUrl = 'httpsAppAgentkongAiDocsApi';
         this.icon = 'file:cortana-ai.svg';
+        this.documentationUrl = 'https://app.agentkong.ai/docs/api';
         this.properties = [
             {
                 displayName: 'API Key',
                 name: 'apiKey',
                 type: 'string',
                 typeOptions: { password: true },
-                default: '',
                 required: true,
-                description: 'Your Cortana AI API key (starts with ak_live_). Generate one in Business Settings → API & Webhooks.',
+                default: '',
+                description: 'Your Cortana API key (sk-ak-…). Create one at Control Center → Settings → API Keys with the scopes: contacts:read, contacts:write, conversions:read, conversions:write, webhooks:read, webhooks:write. The key must have access to at least one business.',
             },
             {
-                displayName: 'Business ID',
-                name: 'businessId',
+                displayName: 'Base URL',
+                name: 'baseUrl',
                 type: 'string',
-                default: '',
-                required: true,
-                description: 'Your Cortana AI Business ID. Find it in the URL when viewing business settings.',
+                default: 'https://app.agentkong.ai/api/v1',
+                description: 'Leave as-is for Cortana cloud. Override only for local/staging testing (e.g. http://localhost:3000/api/v1).',
             },
         ];
         this.authenticate = {
@@ -34,14 +42,14 @@ class CortanaAiApi {
                 },
             },
         };
+        // Any valid key passes here by design (the endpoint requires no specific
+        // scope); missing webhooks:*/conversions:* scopes surface as readable
+        // INSUFFICIENT_SCOPE errors at trigger activation / first action run.
         this.test = {
             request: {
-                baseURL: 'https://app.agentkong.ai',
-                url: '/api/v1/conversion-types',
+                baseURL: '={{$credentials.baseUrl || "https://app.agentkong.ai/api/v1"}}',
+                url: '/businesses',
                 method: 'GET',
-                qs: {
-                    businessId: '={{$credentials.businessId}}',
-                },
             },
         };
     }

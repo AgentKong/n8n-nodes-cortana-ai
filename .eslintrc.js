@@ -22,6 +22,9 @@ module.exports = {
 			rules: {
 				// Plugin treats agentkong.ai/docs/api as "not an http url" — false positive on a valid URL.
 				'n8n-nodes-base/cred-class-field-documentation-url-not-http-url': 'off',
+				// We deliberately use a real docs URL, not the plugin's camelCase slug
+				// (the old slug shipped broken in 0.1.x — a full URL is what users need).
+				'n8n-nodes-base/cred-class-field-documentation-url-miscased': 'off',
 			},
 		},
 		{

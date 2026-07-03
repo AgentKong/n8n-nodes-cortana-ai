@@ -1,150 +1,89 @@
 # n8n-nodes-cortana-ai
 
-This is an n8n community node package for [Cortana AI](https://agentkong.ai). It provides a trigger node and action node to integrate Cortana AI's conversion attribution data with your n8n workflows.
-
-## Nodes
-
-- **Cortana AI Trigger** — Starts a workflow instantly when a new conversion is recorded in Cortana AI
-- **Cortana AI** — Create conversions, list conversions, search contacts, and get conversion types
+Cortana AI community node for [n8n](https://n8n.io) — trigger workflows on new
+conversions or contacts, create conversions with full attribution, and look up
+contacts and conversion types.
 
 ## Installation
 
-### In n8n Cloud or Self-Hosted
+In n8n: **Settings → Community Nodes → Install** and enter
+`n8n-nodes-cortana-ai`.
 
-1. Go to **Settings → Community Nodes**
-2. Click **Install**
-3. Enter: `n8n-nodes-cortana-ai`
-4. Toggle "I understand the risks" and click **Install**
+## Credentials
 
-### Manual (Docker / npm)
+1. In Cortana, open **Control Center → Settings → API Keys** and generate a key
+   (`sk-ak-…`) with these scopes:
+   `contacts:read, contacts:write, conversions:read, conversions:write, webhooks:read, webhooks:write`.
+2. In n8n, create a **Cortana AI API** credential and paste the key.
 
-```bash
-npm install n8n-nodes-cortana-ai
-```
+One credential covers every business the key can access — you pick the business
+on each node. The credential test calls `GET /api/v1/businesses`; if it succeeds
+but the Business dropdown is empty, the key has no accessible businesses
+(restricted allowlist) — create a key with the right business scope.
 
-Then restart your n8n instance.
+The optional **Base URL** field defaults to Cortana cloud
+(`https://app.agentkong.ai/api/v1`); override it only for local or staging
+testing (e.g. `http://localhost:3000/api/v1`).
 
-## Authentication
+## Nodes
 
-1. In n8n, go to **Credentials → New → Cortana AI API**
-2. Enter your:
-   - **API Key** — Generate in Cortana AI → Business Settings → API & Webhooks tab (starts with `ak_live_`)
-   - **Business ID** — Found in the URL when viewing business settings
+### Cortana AI (action)
 
-## Usage
+| Resource | Operation | What it does |
+|---|---|---|
+| Conversion | Create | Records a conversion. Matches the contact by email/phone (creates it if new — no duplicates), attributes it to a conversion source (auto-managed "n8n" source by default). |
+| Conversion | Get Many | Lists conversion entries with type/date filters and Return All pagination. |
+| Contact | Search | Searches contacts by name, email, or phone. |
+| Conversion Type | Get Many | Lists the business's conversion types. |
 
-### Cortana AI Trigger (Recommended Starting Point)
+### Cortana AI Trigger
 
-Add this node at the start of any workflow to receive real-time conversion data:
+Fires on **New Conversion** (optionally filtered to specific conversion types)
+and/or **New Contact**. Activation registers a webhook subscription with
+Cortana; deactivation removes it. Payloads are signed
+(`X-Cortana-Signature: t=<ts>,v1=<hmac>`) and verified against the stored
+signing secret by default — invalid signatures are logged and ignored.
 
-```
-[Cortana AI Trigger] → [Slack: Send Message]
-[Cortana AI Trigger] → [Google Sheets: Add Row]
-[Cortana AI Trigger] → [HubSpot: Create/Update Contact]
-```
+Payload shape (v2 envelope):
 
-**Output data structure:**
-```json
+```jsonc
 {
-  "id": "evt_...",
   "event": "conversion.created",
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "conversion": {
-    "id": "clx...",
-    "occurredAt": "2024-01-15T10:30:00.000Z",
-    "eventValue": 99.99,
-    "currency": "USD",
-    "attributionSource": "facebook",
-    "attributionMedium": "cpc",
-    "attributionCampaign": "winter-promo",
-    "attributionMethod": "TRACKED",
-    "conversionType": "Lead Form"
-  },
-  "contact": {
-    "id": "clx...",
-    "email": "john@example.com",
-    "phone": "+1234567890",
-    "name": "John Smith",
-    "firstName": "John",
-    "lastName": "Smith"
-  },
-  "attribution": {
-    "source": "facebook",
-    "medium": "cpc",
-    "campaign": "winter-promo",
-    "method": "TRACKED"
-  },
-  "business": {
-    "id": "clx...",
-    "name": "Acme Corp"
+  "deliveryId": "…",          // unique per delivery
+  "timestamp": "…",
+  "businessId": "…",
+  "id": "…",                  // entity id — dedup key across redeliveries
+  "data": {
+    "conversion": { "id": "…", "type": "purchase", "displayName": "New Deals Closed", "value": 99.9, "currency": "USD", "occurredAt": "…", "createdAt": "…", "attributionMethod": "…", "metadata": null },
+    "contact": { "id": "…", "email": "…", "phone": "…", "firstName": "…", "lastName": "…", "name": "…", "company": "…", "tags": [], "customFields": {}, "createdAt": "…" },
+    "attribution": { "source": "…", "medium": "…", "campaign": "…", "ad": "…", "fbclid": null, "gclid": null, "firstTouch": null, "lastTouch": null }
   }
 }
 ```
 
-### Cortana AI Action: Create Conversion
+`data.contact` is `null` for anonymous conversions. Compare `occurredAt` with
+`createdAt` to detect late/backfilled events.
 
-Use to send conversions from other tools into Cortana AI:
+## Migrating from 0.1.x
 
-```
-[Typeform: New Submission] → [Cortana AI: Create Conversion]
-[Stripe: Payment Succeeded] → [Cortana AI: Create Conversion]
-[HubSpot: Deal Closed] → [Cortana AI: Create Conversion]
-```
+Version 0.2.0 is a **breaking release** — 0.1.x called an API that no longer
+exists, so every 0.1.x node has been non-functional:
 
-**Required fields:**
-- Conversion Type (select from dropdown)
-- Email OR Phone (at least one)
-
-**Optional fields:**
-- Contact Name, Revenue, Currency, UTM Source/Medium/Campaign/Content/Term, Note
-
-## Example Workflow: New Conversion → Slack Alert
-
-1. Add **Cortana AI Trigger** node
-   - Events: `Conversion Created`
-2. Add **Slack** node (Send Message)
-   - Channel: `#conversions`
-   - Message: `New {{$json.conversion.conversionType}} from {{$json.contact.email}} — ${{$json.conversion.eventValue}} via {{$json.attribution.source}}`
-
-## Example Workflow: Typeform Lead → Cortana AI
-
-1. Add **Typeform Trigger** node
-2. Add **Cortana AI** node
-   - Resource: Conversion
-   - Operation: Create
-   - Conversion Type: "Lead Form"
-   - Email: `{{$json.email}}`
-   - Contact Name: `{{$json.name}}`
-
-## Webhook Security
-
-All webhooks sent by Cortana AI include an `X-Cortana AI-Signature` header with an HMAC-SHA256 signature. The signing secret is stored per subscription and can be used to verify authenticity in a **Function** node:
-
-```javascript
-const crypto = require('crypto');
-const secret = 'whsec_...'; // from subscription creation
-const body = JSON.stringify($input.item.json);
-const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex');
-const received = $input.item.headers['x-agentkong-signature'];
-if (expected !== received) throw new Error('Invalid webhook signature');
-return $input.item;
-```
+1. **Old `ak_live_*` keys don't work.** Create a new `sk-ak-` key with the
+   scopes listed above and update your credential (the `businessId` field is
+   gone from the credential).
+2. **Re-select the business** on every Cortana node — it's now the first
+   parameter on both nodes.
+3. **Re-activate trigger workflows.** Old subscriptions never existed
+   server-side (activation errors on 0.1.x were expected); deactivate + activate
+   each trigger workflow once to register it.
+4. The trigger's filter now uses **conversion types** (not source ids).
 
 ## Development
 
 ```bash
-# Clone and install
-git clone https://github.com/Cortana AI/n8n-nodes-cortana-ai
-cd n8n-nodes-cortana-ai
 npm install
-
-# Build
-npm run build
-
-# Watch mode
-npm run dev
-
-# Lint
+npm run build     # tsc + icon copy into dist/
 npm run lint
 ```
 

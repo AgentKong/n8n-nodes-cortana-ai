@@ -3,7 +3,8 @@ export declare class CortanaAiTrigger implements INodeType {
     description: INodeTypeDescription;
     methods: {
         loadOptions: {
-            getConversionSources(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]>;
+            getBusinesses(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]>;
+            getConversionConfigs(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]>;
         };
     };
     webhookMethods: {
