@@ -15,7 +15,7 @@ class CortanaAiApi {
         this.name = 'cortanaAiApi';
         this.displayName = 'Cortana AI API';
         this.icon = 'file:cortana-ai.svg';
-        this.documentationUrl = 'https://app.agentkong.ai/docs/api';
+        this.documentationUrl = 'https://app.usecortana.ai/docs/api';
         this.properties = [
             {
                 displayName: 'API Key',
@@ -30,7 +30,7 @@ class CortanaAiApi {
                 displayName: 'Base URL',
                 name: 'baseUrl',
                 type: 'string',
-                default: 'https://app.agentkong.ai/api/v1',
+                default: 'https://app.usecortana.ai/api/v1',
                 description: 'Leave as-is for Cortana cloud. Override only for local/staging testing (e.g. http://localhost:3000/api/v1).',
             },
         ];
@@ -47,7 +47,7 @@ class CortanaAiApi {
         // INSUFFICIENT_SCOPE errors at trigger activation / first action run.
         this.test = {
             request: {
-                baseURL: '={{$credentials.baseUrl || "https://app.agentkong.ai/api/v1"}}',
+                baseURL: '={{$credentials.baseUrl || "https://app.usecortana.ai/api/v1"}}',
                 url: '/businesses',
                 method: 'GET',
             },

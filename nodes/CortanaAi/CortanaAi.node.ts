@@ -10,7 +10,7 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
-const DEFAULT_BASE_URL = 'https://app.agentkong.ai/api/v1';
+const DEFAULT_BASE_URL = 'https://app.usecortana.ai/api/v1';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;

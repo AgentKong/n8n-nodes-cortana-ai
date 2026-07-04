@@ -21,7 +21,7 @@ export class CortanaAiApi implements ICredentialType {
 
   icon = 'file:cortana-ai.svg' as const;
 
-  documentationUrl = 'https://app.agentkong.ai/docs/api';
+  documentationUrl = 'https://app.usecortana.ai/docs/api';
 
   properties: INodeProperties[] = [
     {
@@ -38,7 +38,7 @@ export class CortanaAiApi implements ICredentialType {
       displayName: 'Base URL',
       name: 'baseUrl',
       type: 'string',
-      default: 'https://app.agentkong.ai/api/v1',
+      default: 'https://app.usecortana.ai/api/v1',
       description:
         'Leave as-is for Cortana cloud. Override only for local/staging testing (e.g. http://localhost:3000/api/v1).',
     },
@@ -58,7 +58,7 @@ export class CortanaAiApi implements ICredentialType {
   // INSUFFICIENT_SCOPE errors at trigger activation / first action run.
   test: ICredentialTestRequest = {
     request: {
-      baseURL: '={{$credentials.baseUrl || "https://app.agentkong.ai/api/v1"}}',
+      baseURL: '={{$credentials.baseUrl || "https://app.usecortana.ai/api/v1"}}',
       url: '/businesses',
       method: 'GET',
     },

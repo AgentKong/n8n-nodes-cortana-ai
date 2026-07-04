@@ -10,12 +10,12 @@
   "resources": {
     "credentialDocumentation": [
       {
-        "url": "https://app.agentkong.ai/docs/api"
+        "url": "https://app.usecortana.ai/docs/api"
       }
     ],
     "primaryDocumentation": [
       {
-        "url": "https://app.agentkong.ai/docs/api"
+        "url": "https://app.usecortana.ai/docs/api"
       }
     ]
   }

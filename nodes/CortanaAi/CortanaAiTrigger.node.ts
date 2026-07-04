@@ -11,7 +11,7 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes } from 'n8n-workflow';
 
-const DEFAULT_BASE_URL = 'https://app.agentkong.ai/api/v1';
+const DEFAULT_BASE_URL = 'https://app.usecortana.ai/api/v1';
 
 /** Consumers SHOULD reject signatures older than 5 minutes (documented tolerance). */
 const SIGNATURE_TOLERANCE_SECONDS = 300;

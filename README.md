@@ -22,7 +22,7 @@ but the Business dropdown is empty, the key has no accessible businesses
 (restricted allowlist) — create a key with the right business scope.
 
 The optional **Base URL** field defaults to Cortana cloud
-(`https://app.agentkong.ai/api/v1`); override it only for local or staging
+(`https://app.usecortana.ai/api/v1`); override it only for local or staging
 testing (e.g. `http://localhost:3000/api/v1`).
 
 ## Nodes

@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CortanaAi = void 0;
 const n8n_workflow_1 = require("n8n-workflow");
-const DEFAULT_BASE_URL = 'https://app.agentkong.ai/api/v1';
+const DEFAULT_BASE_URL = 'https://app.usecortana.ai/api/v1';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 /** Sentinel for the source dropdown: use (or create) a source named "n8n". */

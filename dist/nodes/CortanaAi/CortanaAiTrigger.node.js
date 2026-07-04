@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CortanaAiTrigger = void 0;
 const crypto_1 = require("crypto");
 const n8n_workflow_1 = require("n8n-workflow");
-const DEFAULT_BASE_URL = 'https://app.agentkong.ai/api/v1';
+const DEFAULT_BASE_URL = 'https://app.usecortana.ai/api/v1';
 /** Consumers SHOULD reject signatures older than 5 minutes (documented tolerance). */
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 async function cortanaRequest(ctx, options) {

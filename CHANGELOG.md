@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 — 2026-07
+
+### Changed
+- Default API host is now `https://app.usecortana.ai/api/v1` (was the legacy
+  `app.agentkong.ai` alias, which redirects and could drop the auth header on
+  the hop). Credential Base URL, both nodes, the credential test, and the docs
+  links all point at the canonical host. Override Base URL on the credential for
+  self-hosted/staging.
+
 ## 0.3.0 — 2026-07
 
 Full API coverage: the action node now exposes every read surface of the
