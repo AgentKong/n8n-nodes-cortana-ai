@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0 — 2026-07
+
+Full API coverage: the action node now exposes every read surface of the
+Cortana public API.
+
+### Added
+- New resources: Agent, Appointment, Attribution (Data / UTMs / Presets /
+  Contacts by LTV), Business, Conversation, Custom Field, Form Submission,
+  Meeting Recording, Message, Shopify (Orders / Customers / Products /
+  Analytics / Abandoned Carts), Stripe (11 operations incl. Payments,
+  Subscriptions, Customers, Metrics), Tag, Tracking Session, Voice Call
+  (incl. Get Transcript), Whop (Payments / Connections / Customers /
+  Memberships).
+- Get operations for Conversion entries and Conversion Types.
+- Contact → Create, and Get Many filters (search / email / phone / tag).
+- Shared Return All pagination across every list operation.
+
+### Changed
+- Contact → Search is now **Contact → Get Many** with a "Search" filter
+  (re-select the operation if you used Search in 0.2.x).
+
 ## 0.2.1 — 2026-07
 
 Compliance/metadata release — functionally identical to 0.2.0, published through

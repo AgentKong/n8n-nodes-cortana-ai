@@ -29,12 +29,18 @@ testing (e.g. `http://localhost:3000/api/v1`).
 
 ### Cortana AI (action)
 
-| Resource | Operation | What it does |
-|---|---|---|
-| Conversion | Create | Records a conversion. Matches the contact by email/phone (creates it if new — no duplicates), attributes it to a conversion source (auto-managed "n8n" source by default). |
-| Conversion | Get Many | Lists conversion entries with type/date filters and Return All pagination. |
-| Contact | Search | Searches contacts by name, email, or phone. |
-| Conversion Type | Get Many | Lists the business's conversion types. |
+| Resource | Operations |
+|---|---|
+| Conversion | Create (contact matched by email/phone, auto-managed source), Get, Get Many |
+| Contact | Create, Get, Get Many (search / email / phone / tag filters) |
+| Attribution | Get Data (date range, model, group-by), Get UTMs, Get Presets, Get Contacts by LTV |
+| Agent · Appointment · Conversation · Conversion Type · Form Submission · Tracking Session | Get, Get Many |
+| Custom Field · Tag · Meeting Recording · Business | Get Many |
+| Message | Get Many (per conversation) |
+| Voice Call | Get, Get Many, Get Transcript |
+| Stripe | Payments, Subscriptions, Customers, Metrics, Products, Invoices, Disputes, Payment Intents, Payment Links, Prices, Promotion Codes |
+| Shopify | Orders, Customers, Products, Analytics, Abandoned Carts |
+| Whop | Payments, Connections, Customers, Memberships |
 
 ### Cortana AI Trigger
 

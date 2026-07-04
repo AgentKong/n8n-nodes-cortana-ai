@@ -4,6 +4,7 @@ import type {
   INodeExecutionData,
   INodeType,
   INodeTypeDescription,
+  INodeProperties,
   ILoadOptionsFunctions,
   INodePropertyOptions,
 } from 'n8n-workflow';
@@ -16,6 +17,9 @@ const MAX_PAGES = 100;
 
 /** Sentinel for the source dropdown: use (or create) a source named "n8n". */
 const AUTO_SOURCE = '__auto__';
+
+const EXPRESSION_HINT =
+  'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>';
 
 /** New v1 error envelope is { error: { code, message } } — surface `message`. */
 function extractErrorMessage(err: unknown): string {
@@ -44,13 +48,12 @@ async function cortanaRequest(
     path: string;
     body?: IDataObject;
     qs?: IDataObject;
-  }
+  },
 ): Promise<IDataObject> {
   const credentials = await ctx.getCredentials('cortanaAiApi');
   const baseUrl = ((credentials.baseUrl as string) || DEFAULT_BASE_URL).replace(/\/+$/, '');
   // Build the query string into the URL ourselves — n8n's request helper does
-  // not reliably serialize the `qs` option across versions, which silently
-  // dropped filters like `search`/`email` (returned unfiltered lists).
+  // not reliably serialize the `qs` option across versions.
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(options.qs ?? {})) {
     if (value !== undefined && value !== null && value !== '') {
@@ -80,7 +83,7 @@ async function cortanaRequest(
       const retryAfter = Number(
         (err as { response?: { headers?: Record<string, string> } }).response?.headers?.[
           'retry-after'
-        ] ?? 2
+        ] ?? 2,
       );
       await new Promise((resolve) => setTimeout(resolve, Math.min(retryAfter, 30) * 1000));
       return (await doRequest()) as IDataObject;
@@ -89,6 +92,119 @@ async function cortanaRequest(
   }
 }
 
+// ─── Route tables ──────────────────────────────────────────────────────
+// Every path below is a live, tested endpoint of the scoped public API.
+
+/** resource:operation → list endpoint (paginated page/limit envelope). */
+const LIST_ROUTES: Record<string, (businessId: string) => string> = {
+  'agent:getMany': (b) => `/businesses/${b}/agents`,
+  'appointment:getMany': (b) => `/businesses/${b}/appointments`,
+  'contact:getMany': (b) => `/businesses/${b}/contacts`,
+  'conversation:getMany': (b) => `/businesses/${b}/conversations`,
+  'conversionType:getMany': (b) => `/businesses/${b}/conversions/configs`,
+  'customField:getMany': (b) => `/businesses/${b}/custom-fields`,
+  'formSubmission:getMany': (b) => `/businesses/${b}/form-submissions`,
+  'meetingRecording:getMany': (b) => `/businesses/${b}/meetings`,
+  'shopify:getAbandonedCarts': (b) => `/businesses/${b}/shopify/abandoned-carts`,
+  'shopify:getCustomers': (b) => `/businesses/${b}/shopify/customers`,
+  'shopify:getOrders': (b) => `/businesses/${b}/shopify/orders`,
+  'shopify:getProducts': (b) => `/businesses/${b}/shopify/products`,
+  'stripe:getCustomers': (b) => `/businesses/${b}/stripe/customers`,
+  'stripe:getDisputes': (b) => `/businesses/${b}/stripe/disputes`,
+  'stripe:getInvoices': (b) => `/businesses/${b}/stripe/invoices`,
+  'stripe:getPaymentIntents': (b) => `/businesses/${b}/stripe/payment-intents`,
+  'stripe:getPaymentLinks': (b) => `/businesses/${b}/stripe/payment-links`,
+  'stripe:getPayments': (b) => `/businesses/${b}/stripe/payments`,
+  'stripe:getPrices': (b) => `/businesses/${b}/stripe/prices`,
+  'stripe:getProducts': (b) => `/businesses/${b}/stripe/products`,
+  'stripe:getPromotionCodes': (b) => `/businesses/${b}/stripe/promotion-codes`,
+  'stripe:getSubscriptions': (b) => `/businesses/${b}/stripe/subscriptions`,
+  'trackingSession:getMany': (b) => `/businesses/${b}/tracking/sessions`,
+  'tag:getMany': (b) => `/businesses/${b}/tags`,
+  'voiceCall:getMany': (b) => `/businesses/${b}/calls`,
+  'whop:getConnections': (b) => `/businesses/${b}/whop/connections`,
+  'whop:getCustomers': (b) => `/businesses/${b}/whop/customers`,
+  'whop:getMemberships': (b) => `/businesses/${b}/whop/memberships`,
+  'whop:getPayments': (b) => `/businesses/${b}/whop/payments`,
+};
+
+/** All operation values that render the shared Return All / Limit props. */
+const PAGINATED_OPERATIONS = Object.keys(LIST_ROUTES)
+  .map((k) => k.split(':')[1])
+  .concat(['getMany'])
+  .filter((v, i, a) => a.indexOf(v) === i);
+
+/** resource:get → single-entity endpoint. */
+const GET_ROUTES: Record<string, (businessId: string, id: string) => string> = {
+  'agent:get': (b, id) => `/businesses/${b}/agents/${id}`,
+  'appointment:get': (b, id) => `/businesses/${b}/appointments/${id}`,
+  'contact:get': (b, id) => `/businesses/${b}/contacts/${id}`,
+  'conversation:get': (b, id) => `/businesses/${b}/conversations/${id}`,
+  'conversion:get': (b, id) => `/businesses/${b}/conversions/entries/${id}`,
+  'conversionType:get': (b, id) => `/businesses/${b}/conversions/configs/${id}`,
+  'formSubmission:get': (b, id) => `/businesses/${b}/form-submissions/${id}`,
+  'trackingSession:get': (b, id) => `/businesses/${b}/tracking/sessions/${id}`,
+  'voiceCall:get': (b, id) => `/businesses/${b}/calls/${id}`,
+  'voiceCall:getTranscript': (b, id) => `/businesses/${b}/calls/${id}/transcript`,
+};
+
+/** Single-object (non-paginated) reads. */
+const OBJECT_ROUTES: Record<string, (businessId: string) => string> = {
+  'attribution:getPresets': (b) => `/businesses/${b}/attribution/presets`,
+  'attribution:getUtms': (b) => `/businesses/${b}/attribution/utms`,
+  'shopify:getAnalytics': (b) => `/businesses/${b}/shopify/analytics`,
+  'stripe:getMetrics': (b) => `/businesses/${b}/stripe/metrics`,
+};
+
+// ─── Property factories (keep the 18-resource schema readable) ─────────
+
+function idProperty(
+  displayName: string,
+  name: string,
+  resource: string,
+  operations: string[],
+  description: string,
+): INodeProperties {
+  return {
+    displayName,
+    name,
+    type: 'string',
+    required: true,
+    displayOptions: { show: { resource: [resource], operation: operations } },
+    default: '',
+    description,
+  };
+}
+
+function operationsProperty(
+  resource: string,
+  options: Array<{ name: string; value: string; action: string; description: string }>,
+  defaultValue: string,
+): INodeProperties {
+  return {
+    displayName: 'Operation',
+    name: 'operation',
+    type: 'options',
+    noDataExpression: true,
+    displayOptions: { show: { resource: [resource] } },
+    options,
+    default: defaultValue,
+  };
+}
+
+const getManyOption = (noun: string) => ({
+  name: 'Get Many',
+  value: 'getMany',
+  action: `Get many ${noun}`,
+  description: `Retrieve a list of ${noun}`,
+});
+const getOption = (noun: string) => ({
+  name: 'Get',
+  value: 'get',
+  action: `Get a ${noun}`,
+  description: `Retrieve a single ${noun}`,
+});
+
 export class CortanaAi implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Cortana AI',
@@ -96,8 +212,8 @@ export class CortanaAi implements INodeType {
     icon: 'file:cortana-ai.svg',
     group: ['transform'],
     version: 1,
-    subtitle: '={{$parameter["operation"]}}',
-    description: 'Create conversions and look up data in Cortana',
+    subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
+    description: 'Read and create data in Cortana — conversions, contacts, attribution, and more',
     defaults: { name: 'Cortana AI' },
     inputs: [NodeConnectionTypes.Main],
     outputs: [NodeConnectionTypes.Main],
@@ -116,8 +232,7 @@ export class CortanaAi implements INodeType {
         required: true,
         typeOptions: { loadOptionsMethod: 'getBusinesses' },
         default: '',
-        description:
-          'The Cortana business this node acts on. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+        description: 'The Cortana business this node acts on. ,. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
 
       // ─── Resource ───────────────────────────────────────────────────────
@@ -127,74 +242,494 @@ export class CortanaAi implements INodeType {
         type: 'options',
         noDataExpression: true,
         options: [
-          { name: 'Conversion', value: 'conversion' },
+          { name: 'Agent', value: 'agent' },
+          { name: 'Appointment', value: 'appointment' },
+          { name: 'Attribution', value: 'attribution' },
+          { name: 'Business', value: 'business' },
           { name: 'Contact', value: 'contact' },
+          { name: 'Conversation', value: 'conversation' },
+          { name: 'Conversion', value: 'conversion' },
           { name: 'Conversion Type', value: 'conversionType' },
+          { name: 'Custom Field', value: 'customField' },
+          { name: 'Form Submission', value: 'formSubmission' },
+          { name: 'Meeting Recording', value: 'meetingRecording' },
+          { name: 'Message', value: 'message' },
+          { name: 'Shopify', value: 'shopify' },
+          { name: 'Stripe', value: 'stripe' },
+          { name: 'Tag', value: 'tag' },
+          { name: 'Tracking Session', value: 'trackingSession' },
+          { name: 'Voice Call', value: 'voiceCall' },
+          { name: 'Whop', value: 'whop' },
         ],
         default: 'conversion',
       },
 
-      // ─── Conversion Operations ────────────────────────────────────────
-      {
-        displayName: 'Operation',
-        name: 'operation',
-        type: 'options',
-        noDataExpression: true,
-        displayOptions: { show: { resource: ['conversion'] } },
-        options: [
+      // ─── Operations per resource ────────────────────────────────────────
+      operationsProperty('agent', [getOption('agent'), getManyOption('agents')], 'getMany'),
+      operationsProperty(
+        'appointment',
+        [getOption('appointment'), getManyOption('appointments')],
+        'getMany',
+      ),
+      operationsProperty(
+        'attribution',
+        [
+          {
+            name: 'Get Contacts by LTV',
+            value: 'getContactsByLtv',
+            action: 'Get contacts by LTV',
+            description: 'Retrieve contacts ranked by lifetime value',
+          },
+          {
+            name: 'Get Data',
+            value: 'getData',
+            action: 'Get attribution data',
+            description: 'Retrieve aggregated attribution rows for a date range',
+          },
+          {
+            name: 'Get Presets',
+            value: 'getPresets',
+            action: 'Get attribution presets',
+            description: 'Retrieve saved attribution presets',
+          },
+          {
+            name: 'Get UTMs',
+            value: 'getUtms',
+            action: 'Get UTM values',
+            description: 'Retrieve known UTM values for the business',
+          },
+        ],
+        'getData',
+      ),
+      operationsProperty('business', [getManyOption('businesses')], 'getMany'),
+      operationsProperty(
+        'contact',
+        [
+          {
+            name: 'Create',
+            value: 'create',
+            action: 'Create a contact',
+            description: 'Create a new contact (matched server-side, no duplicates)',
+          },
+          getOption('contact'),
+          getManyOption('contacts'),
+        ],
+        'getMany',
+      ),
+      operationsProperty(
+        'conversation',
+        [getOption('conversation'), getManyOption('conversations')],
+        'getMany',
+      ),
+      operationsProperty(
+        'conversion',
+        [
           {
             name: 'Create',
             value: 'create',
             action: 'Create a conversion',
             description: 'Record a new conversion entry in Cortana',
           },
+          getOption('conversion entry'),
+          getManyOption('conversion entries'),
+        ],
+        'create',
+      ),
+      operationsProperty(
+        'conversionType',
+        [getOption('conversion type'), getManyOption('conversion types')],
+        'getMany',
+      ),
+      operationsProperty('customField', [getManyOption('custom fields')], 'getMany'),
+      operationsProperty(
+        'formSubmission',
+        [getOption('form submission'), getManyOption('form submissions')],
+        'getMany',
+      ),
+      operationsProperty('meetingRecording', [getManyOption('meeting recordings')], 'getMany'),
+      operationsProperty('message', [getManyOption('messages')], 'getMany'),
+      operationsProperty(
+        'shopify',
+        [
           {
-            name: 'Get Many',
-            value: 'getMany',
-            action: 'Get many conversions',
-            description: 'Retrieve a list of conversion entries',
+            name: 'Get Abandoned Carts',
+            value: 'getAbandonedCarts',
+            action: 'Get Shopify abandoned carts',
+            description: 'Retrieve a list of abandoned checkouts',
+          },
+          {
+            name: 'Get Analytics',
+            value: 'getAnalytics',
+            action: 'Get Shopify analytics',
+            description: 'Retrieve the Shopify analytics summary',
+          },
+          {
+            name: 'Get Customers',
+            value: 'getCustomers',
+            action: 'Get Shopify customers',
+            description: 'Retrieve a list of Shopify customers',
+          },
+          {
+            name: 'Get Orders',
+            value: 'getOrders',
+            action: 'Get Shopify orders',
+            description: 'Retrieve a list of Shopify orders',
+          },
+          {
+            name: 'Get Products',
+            value: 'getProducts',
+            action: 'Get Shopify products',
+            description: 'Retrieve a list of Shopify products',
           },
         ],
-        default: 'create',
+        'getOrders',
+      ),
+      operationsProperty(
+        'stripe',
+        [
+          {
+            name: 'Get Customers',
+            value: 'getCustomers',
+            action: 'Get Stripe customers',
+            description: 'Retrieve a list of Stripe customers',
+          },
+          {
+            name: 'Get Disputes',
+            value: 'getDisputes',
+            action: 'Get Stripe disputes',
+            description: 'Retrieve a list of Stripe disputes',
+          },
+          {
+            name: 'Get Invoices',
+            value: 'getInvoices',
+            action: 'Get Stripe invoices',
+            description: 'Retrieve a list of Stripe invoices',
+          },
+          {
+            name: 'Get Metrics',
+            value: 'getMetrics',
+            action: 'Get Stripe metrics',
+            description: 'Retrieve the Stripe revenue metrics summary',
+          },
+          {
+            name: 'Get Payment Intents',
+            value: 'getPaymentIntents',
+            action: 'Get Stripe payment intents',
+            description: 'Retrieve a list of Stripe payment intents',
+          },
+          {
+            name: 'Get Payment Links',
+            value: 'getPaymentLinks',
+            action: 'Get Stripe payment links',
+            description: 'Retrieve a list of Stripe payment links',
+          },
+          {
+            name: 'Get Payments',
+            value: 'getPayments',
+            action: 'Get Stripe payments',
+            description: 'Retrieve a list of Stripe payments',
+          },
+          {
+            name: 'Get Prices',
+            value: 'getPrices',
+            action: 'Get Stripe prices',
+            description: 'Retrieve a list of Stripe prices',
+          },
+          {
+            name: 'Get Products',
+            value: 'getProducts',
+            action: 'Get Stripe products',
+            description: 'Retrieve a list of Stripe products',
+          },
+          {
+            name: 'Get Promotion Codes',
+            value: 'getPromotionCodes',
+            action: 'Get Stripe promotion codes',
+            description: 'Retrieve a list of Stripe promotion codes',
+          },
+          {
+            name: 'Get Subscriptions',
+            value: 'getSubscriptions',
+            action: 'Get Stripe subscriptions',
+            description: 'Retrieve a list of Stripe subscriptions',
+          },
+        ],
+        'getPayments',
+      ),
+      operationsProperty('tag', [getManyOption('tags')], 'getMany'),
+      operationsProperty(
+        'trackingSession',
+        [getOption('tracking session'), getManyOption('tracking sessions')],
+        'getMany',
+      ),
+      operationsProperty(
+        'voiceCall',
+        [
+          getOption('voice call'),
+          getManyOption('voice calls'),
+          {
+            name: 'Get Transcript',
+            value: 'getTranscript',
+            action: 'Get a call transcript',
+            description: 'Retrieve the transcript of a voice call',
+          },
+        ],
+        'getMany',
+      ),
+      operationsProperty(
+        'whop',
+        [
+          {
+            name: 'Get Connections',
+            value: 'getConnections',
+            action: 'Get Whop connections',
+            description: 'Retrieve a list of Whop connections',
+          },
+          {
+            name: 'Get Customers',
+            value: 'getCustomers',
+            action: 'Get Whop customers',
+            description: 'Retrieve a list of Whop customers',
+          },
+          {
+            name: 'Get Memberships',
+            value: 'getMemberships',
+            action: 'Get Whop memberships',
+            description: 'Retrieve a list of Whop memberships',
+          },
+          {
+            name: 'Get Payments',
+            value: 'getPayments',
+            action: 'Get Whop payments',
+            description: 'Retrieve a list of Whop payments',
+          },
+        ],
+        'getPayments',
+      ),
+
+      // ─── Single-entity ID params ────────────────────────────────────────
+      idProperty('Agent ID', 'entityId', 'agent', ['get'], 'ID of the agent to retrieve'),
+      idProperty(
+        'Appointment ID',
+        'entityId',
+        'appointment',
+        ['get'],
+        'ID of the appointment to retrieve',
+      ),
+      idProperty('Contact ID', 'entityId', 'contact', ['get'], 'ID of the contact to retrieve'),
+      idProperty(
+        'Conversation ID',
+        'entityId',
+        'conversation',
+        ['get'],
+        'ID of the conversation to retrieve',
+      ),
+      idProperty(
+        'Entry ID',
+        'entityId',
+        'conversion',
+        ['get'],
+        'ID of the conversion entry to retrieve',
+      ),
+      idProperty(
+        'Conversion Type ID',
+        'entityId',
+        'conversionType',
+        ['get'],
+        'ID of the conversion type to retrieve',
+      ),
+      idProperty(
+        'Submission ID',
+        'entityId',
+        'formSubmission',
+        ['get'],
+        'ID of the form submission to retrieve',
+      ),
+      idProperty(
+        'Session ID',
+        'entityId',
+        'trackingSession',
+        ['get'],
+        'ID of the tracking session to retrieve',
+      ),
+      idProperty(
+        'Call ID',
+        'entityId',
+        'voiceCall',
+        ['get', 'getTranscript'],
+        'ID of the voice call',
+      ),
+      idProperty(
+        'Conversation ID',
+        'conversationId',
+        'message',
+        ['getMany'],
+        'ID of the conversation whose messages to retrieve',
+      ),
+
+      // ─── Attribution: Get Data params ───────────────────────────────────
+      {
+        displayName: 'Start Date',
+        name: 'startDate',
+        type: 'dateTime',
+        required: true,
+        displayOptions: { show: { resource: ['attribution'], operation: ['getData'] } },
+        default: '',
+        description: 'Beginning of the reporting window',
+      },
+      {
+        displayName: 'End Date',
+        name: 'endDate',
+        type: 'dateTime',
+        required: true,
+        displayOptions: { show: { resource: ['attribution'], operation: ['getData'] } },
+        default: '',
+        description: 'End of the reporting window',
+      },
+      {
+        displayName: 'Group By',
+        name: 'groupBy',
+        type: 'options',
+        displayOptions: { show: { resource: ['attribution'], operation: ['getData'] } },
+        options: [
+          { name: 'Ad', value: 'ad' },
+          { name: 'Campaign', value: 'campaign' },
+          { name: 'Medium', value: 'medium' },
+          { name: 'Source', value: 'source' },
+        ],
+        default: 'source',
+        description: 'Dimension to aggregate the attribution rows by',
+      },
+      {
+        displayName: 'Attribution Model',
+        name: 'attributionModel',
+        type: 'options',
+        displayOptions: { show: { resource: ['attribution'], operation: ['getData'] } },
+        options: [
+          { name: 'First Click', value: 'first_click' },
+          { name: 'Last Click', value: 'last_click' },
+          { name: 'Paid Priority', value: 'paid_priority' },
+          { name: 'Scientific', value: 'scientific' },
+        ],
+        default: 'last_click',
+        description: 'Attribution model used to credit conversions',
+      },
+      {
+        displayName: 'Limit',
+        name: 'limit',
+        type: 'number',
+        typeOptions: { minValue: 1 },
+        displayOptions: { show: { resource: ['attribution'], operation: ['getContactsByLtv'] } },
+        default: 50,
+        description: 'Max number of results to return',
       },
 
-      // ─── Contact Operations ───────────────────────────────────────────
+      // ─── Contact: Create fields ─────────────────────────────────────────
       {
-        displayName: 'Operation',
-        name: 'operation',
-        type: 'options',
-        noDataExpression: true,
-        displayOptions: { show: { resource: ['contact'] } },
+        displayName: 'Email',
+        name: 'email',
+        type: 'string',
+        placeholder: 'name@email.com',
+        displayOptions: { show: { resource: ['contact'], operation: ['create'] } },
+        default: '',
+        description: 'Contact email address. At least one of email, phone, or first name is required.',
+      },
+      {
+        displayName: 'Phone',
+        name: 'phone',
+        type: 'string',
+        displayOptions: { show: { resource: ['contact'], operation: ['create'] } },
+        default: '',
+        description: 'Contact phone number (include country code)',
+      },
+      {
+        displayName: 'Additional Fields',
+        name: 'contactFields',
+        type: 'collection',
+        placeholder: 'Add Field',
+        displayOptions: { show: { resource: ['contact'], operation: ['create'] } },
+        default: {},
         options: [
           {
-            name: 'Search',
-            value: 'search',
-            action: 'Search contacts',
-            description: 'Search contacts by name, email, or phone',
+            displayName: 'Company',
+            name: 'company',
+            type: 'string',
+            default: '',
+            description: 'Company the contact belongs to',
+          },
+          {
+            displayName: 'First Name',
+            name: 'firstName',
+            type: 'string',
+            default: '',
+            description: 'Contact first name',
+          },
+          {
+            displayName: 'Last Name',
+            name: 'lastName',
+            type: 'string',
+            default: '',
+            description: 'Contact last name',
+          },
+          {
+            displayName: 'Note',
+            name: 'note',
+            type: 'string',
+            default: '',
+            description: 'Free-form note stored on the contact',
+          },
+          {
+            displayName: 'Source',
+            name: 'source',
+            type: 'string',
+            default: 'n8n',
+            description: 'Source label stored on the contact',
           },
         ],
-        default: 'search',
       },
 
-      // ─── Conversion Type Operations ───────────────────────────────────
+      // ─── Contact: Get Many filters ──────────────────────────────────────
       {
-        displayName: 'Operation',
-        name: 'operation',
-        type: 'options',
-        noDataExpression: true,
-        displayOptions: { show: { resource: ['conversionType'] } },
+        displayName: 'Filters',
+        name: 'contactFilters',
+        type: 'collection',
+        placeholder: 'Add Filter',
+        displayOptions: { show: { resource: ['contact'], operation: ['getMany'] } },
+        default: {},
         options: [
           {
-            name: 'Get Many',
-            value: 'getMany',
-            action: 'Get all conversion types',
-            description: 'List all active conversion types for the business',
+            displayName: 'Email',
+            name: 'email',
+            type: 'string',
+												placeholder: 'name@email.com',
+            default: '',
+            description: 'Exact email to match',
+          },
+          {
+            displayName: 'Phone',
+            name: 'phone',
+            type: 'string',
+            default: '',
+            description: 'Exact phone number to match',
+          },
+          {
+            displayName: 'Search',
+            name: 'search',
+            type: 'string',
+            default: '',
+            description: 'Match name, email, or phone starting with this text',
+          },
+          {
+            displayName: 'Tag',
+            name: 'tag',
+            type: 'string',
+            default: '',
+            description: 'Only contacts carrying this tag',
           },
         ],
-        default: 'getMany',
       },
 
-      // ─── Create Conversion Fields ─────────────────────────────────────
+      // ─── Conversion: Create fields (unchanged from 0.2.x) ───────────────
       {
         displayName: 'Conversion Type Name or ID',
         name: 'conversionConfigId',
@@ -204,12 +739,9 @@ export class CortanaAi implements INodeType {
           loadOptionsMethod: 'getConversionConfigs',
           loadOptionsDependsOn: ['businessId'],
         },
-        displayOptions: {
-          show: { resource: ['conversion'], operation: ['create'] },
-        },
+        displayOptions: { show: { resource: ['conversion'], operation: ['create'] } },
         default: '',
-        description:
-          'The conversion type to record. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+        description: 'The conversion type to record. ,. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Source Name or ID',
@@ -219,20 +751,16 @@ export class CortanaAi implements INodeType {
           loadOptionsMethod: 'getConversionSources',
           loadOptionsDependsOn: ['businessId', 'conversionConfigId'],
         },
-        displayOptions: {
-          show: { resource: ['conversion'], operation: ['create'] },
-        },
+        displayOptions: { show: { resource: ['conversion'], operation: ['create'] } },
         default: '__auto__',
-        description: 'The conversion source the entry is attributed to. "Auto" uses (or creates) a source named "n8n" under the chosen conversion type. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+        description: 'The conversion source the entry is attributed to. ,. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Email',
         name: 'email',
         type: 'string',
         placeholder: 'name@email.com',
-        displayOptions: {
-          show: { resource: ['conversion'], operation: ['create'] },
-        },
+        displayOptions: { show: { resource: ['conversion'], operation: ['create'] } },
         default: '',
         description:
           'Contact email address. Required if phone is not provided. Existing contacts are matched by email (no duplicates).',
@@ -241,9 +769,7 @@ export class CortanaAi implements INodeType {
         displayName: 'Phone',
         name: 'phone',
         type: 'string',
-        displayOptions: {
-          show: { resource: ['conversion'], operation: ['create'] },
-        },
+        displayOptions: { show: { resource: ['conversion'], operation: ['create'] } },
         default: '',
         description:
           'Contact phone number (include country code). Required if email is not provided.',
@@ -253,9 +779,7 @@ export class CortanaAi implements INodeType {
         name: 'additionalFields',
         type: 'collection',
         placeholder: 'Add Field',
-        displayOptions: {
-          show: { resource: ['conversion'], operation: ['create'] },
-        },
+        displayOptions: { show: { resource: ['conversion'], operation: ['create'] } },
         default: {},
         options: [
           {
@@ -296,40 +820,13 @@ export class CortanaAi implements INodeType {
         ],
       },
 
-      // ─── Get Many Conversions Fields ──────────────────────────────────
-      {
-        displayName: 'Return All',
-        name: 'returnAll',
-        type: 'boolean',
-        displayOptions: {
-          show: { resource: ['conversion'], operation: ['getMany'] },
-        },
-        default: false,
-        description: 'Whether to return all results or only up to a given limit',
-      },
-      {
-        displayName: 'Limit',
-        name: 'limit',
-        type: 'number',
-        typeOptions: { minValue: 1 },
-        displayOptions: {
-          show: {
-            resource: ['conversion'],
-            operation: ['getMany'],
-            returnAll: [false],
-          },
-        },
-        default: 50,
-        description: 'Max number of results to return',
-      },
+      // ─── Conversion: Get Many filters ───────────────────────────────────
       {
         displayName: 'Filters',
         name: 'filters',
         type: 'collection',
         placeholder: 'Add Filter',
-        displayOptions: {
-          show: { resource: ['conversion'], operation: ['getMany'] },
-        },
+        displayOptions: { show: { resource: ['conversion'], operation: ['getMany'] } },
         default: {},
         options: [
           {
@@ -341,15 +838,7 @@ export class CortanaAi implements INodeType {
               loadOptionsDependsOn: ['businessId'],
             },
             default: '',
-            description:
-              'Only return conversions of this type. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
-          },
-          {
-            displayName: 'Start Date',
-            name: 'from',
-            type: 'dateTime',
-            default: '',
-            description: 'Only conversions occurring on or after this date',
+            description: 'Only return conversions of this type. ,. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
           },
           {
             displayName: 'End Date',
@@ -358,20 +847,46 @@ export class CortanaAi implements INodeType {
             default: '',
             description: 'Only conversions occurring on or before this date',
           },
+          {
+            displayName: 'Start Date',
+            name: 'from',
+            type: 'dateTime',
+            default: '',
+            description: 'Only conversions occurring on or after this date',
+          },
         ],
       },
 
-      // ─── Search Contacts Fields ───────────────────────────────────────
+      // ─── Shared pagination (all list operations) ────────────────────────
       {
-        displayName: 'Search Query',
-        name: 'query',
-        type: 'string',
-        required: true,
+        displayName: 'Return All',
+        name: 'returnAll',
+        type: 'boolean',
         displayOptions: {
-          show: { resource: ['contact'], operation: ['search'] },
+          show: {
+            resource: [
+              'agent',
+              'appointment',
+              'contact',
+              'conversation',
+              'conversion',
+              'conversionType',
+              'customField',
+              'formSubmission',
+              'meetingRecording',
+              'message',
+              'shopify',
+              'stripe',
+              'tag',
+              'trackingSession',
+              'voiceCall',
+              'whop',
+            ],
+            operation: PAGINATED_OPERATIONS,
+          },
         },
-        default: '',
-        description: 'Search contacts by name, email, or phone number',
+        default: false,
+        description: 'Whether to return all results or only up to a given limit',
       },
       {
         displayName: 'Limit',
@@ -379,7 +894,28 @@ export class CortanaAi implements INodeType {
         type: 'number',
         typeOptions: { minValue: 1 },
         displayOptions: {
-          show: { resource: ['contact'], operation: ['search'] },
+          show: {
+            resource: [
+              'agent',
+              'appointment',
+              'contact',
+              'conversation',
+              'conversion',
+              'conversionType',
+              'customField',
+              'formSubmission',
+              'meetingRecording',
+              'message',
+              'shopify',
+              'stripe',
+              'tag',
+              'trackingSession',
+              'voiceCall',
+              'whop',
+            ],
+            operation: PAGINATED_OPERATIONS,
+            returnAll: [false],
+          },
         },
         default: 50,
         description: 'Max number of results to return',
@@ -445,6 +981,26 @@ export class CortanaAi implements INodeType {
     // Per-run cache so loops don't re-resolve the same source/contact.
     const sourceCache = new Map<string, string>();
 
+    const paginate = async (path: string, extraQs: IDataObject, limit: number) => {
+      const collected: IDataObject[] = [];
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        const result = await cortanaRequest(this, {
+          method: 'GET',
+          path,
+          qs: {
+            ...extraQs,
+            page,
+            limit: Math.min(PAGE_SIZE, limit === Infinity ? PAGE_SIZE : limit),
+          },
+        });
+        const rows = (result.data as IDataObject[]) ?? [];
+        collected.push(...rows);
+        const pagination = result.pagination as IDataObject | undefined;
+        if (collected.length >= limit || !pagination?.hasMore || rows.length === 0) break;
+      }
+      return limit === Infinity ? collected : collected.slice(0, limit);
+    };
+
     const resolveSourceId = async (businessId: string, configId: string, chosen: string) => {
       if (chosen !== AUTO_SOURCE) return chosen;
       const cacheKey = `${businessId}:${configId}`;
@@ -458,7 +1014,7 @@ export class CortanaAi implements INodeType {
       });
       const sources = (list.data as IDataObject[]) ?? [];
       let source = sources.find(
-        (s) => ((s.name as string) || '').toLowerCase() === 'n8n' && s.isActive !== false
+        (s) => ((s.name as string) || '').toLowerCase() === 'n8n' && s.isActive !== false,
       );
       if (!source) {
         const created = await cortanaRequest(this, {
@@ -477,7 +1033,7 @@ export class CortanaAi implements INodeType {
       businessId: string,
       email: string,
       phone: string,
-      extra: { firstName?: string; lastName?: string }
+      extra: { firstName?: string; lastName?: string },
     ) => {
       // Exact email/phone filters keep contact dedup server-consistent.
       const qs: IDataObject = { limit: 1 };
@@ -510,8 +1066,124 @@ export class CortanaAi implements INodeType {
         const businessId = this.getNodeParameter('businessId', i) as string;
         const resource = this.getNodeParameter('resource', i) as string;
         const operation = this.getNodeParameter('operation', i) as string;
+        const routeKey = `${resource}:${operation}`;
 
-        if (resource === 'conversion' && operation === 'create') {
+        // ── Generic single-entity reads ──
+        if (GET_ROUTES[routeKey]) {
+          const idParam = resource === 'message' ? 'conversationId' : 'entityId';
+          const id = this.getNodeParameter(idParam, i) as string;
+          const result = await cortanaRequest(this, {
+            method: 'GET',
+            path: GET_ROUTES[routeKey](businessId, id),
+          });
+          returnData.push((result.data as IDataObject) ?? result);
+          continue;
+        }
+
+        // ── Generic single-object reads ──
+        if (OBJECT_ROUTES[routeKey]) {
+          const result = await cortanaRequest(this, {
+            method: 'GET',
+            path: OBJECT_ROUTES[routeKey](businessId),
+          });
+          const data = result.data as IDataObject | IDataObject[];
+          if (Array.isArray(data)) returnData.push(...data);
+          else returnData.push(data ?? result);
+          continue;
+        }
+
+        // ── Generic paginated lists ──
+        if (LIST_ROUTES[routeKey]) {
+          const returnAll = this.getNodeParameter('returnAll', i, false) as boolean;
+          const limit = returnAll ? Infinity : (this.getNodeParameter('limit', i, 50) as number);
+          const extraQs: IDataObject = {};
+          if (resource === 'contact') {
+            Object.assign(extraQs, this.getNodeParameter('contactFilters', i, {}) as IDataObject);
+          }
+          returnData.push(...(await paginate(LIST_ROUTES[routeKey](businessId), extraQs, limit)));
+          continue;
+        }
+
+        // ── Business: Get Many (account-level, not business-scoped) ──
+        if (routeKey === 'business:getMany') {
+          const result = await cortanaRequest(this, { method: 'GET', path: '/businesses' });
+          returnData.push(...(((result.data as IDataObject[]) ?? [])));
+          continue;
+        }
+
+        // ── Message: Get Many (nested under a conversation) ──
+        if (routeKey === 'message:getMany') {
+          const conversationId = this.getNodeParameter('conversationId', i) as string;
+          const returnAll = this.getNodeParameter('returnAll', i, false) as boolean;
+          const limit = returnAll ? Infinity : (this.getNodeParameter('limit', i, 50) as number);
+          returnData.push(
+            ...(await paginate(
+              `/businesses/${businessId}/conversations/${conversationId}/messages`,
+              {},
+              limit,
+            )),
+          );
+          continue;
+        }
+
+        // ── Attribution ──
+        if (routeKey === 'attribution:getData') {
+          const startDate = new Date(this.getNodeParameter('startDate', i) as string).toISOString();
+          const endDate = new Date(this.getNodeParameter('endDate', i) as string).toISOString();
+          const result = await cortanaRequest(this, {
+            method: 'GET',
+            path: `/businesses/${businessId}/attribution/data`,
+            qs: {
+              startDate,
+              endDate,
+              groupBy: this.getNodeParameter('groupBy', i) as string,
+              attributionModel: this.getNodeParameter('attributionModel', i) as string,
+            },
+          });
+          const payload = (result.data as IDataObject) ?? {};
+          const rows = payload.data as IDataObject[] | undefined;
+          if (Array.isArray(rows)) returnData.push(...rows);
+          else returnData.push(payload);
+          continue;
+        }
+        if (routeKey === 'attribution:getContactsByLtv') {
+          const limit = this.getNodeParameter('limit', i, 50) as number;
+          const result = await cortanaRequest(this, {
+            method: 'GET',
+            path: `/businesses/${businessId}/attribution/contacts-by-ltv`,
+            qs: { limit },
+          });
+          returnData.push(...(((result.data as IDataObject[]) ?? [])));
+          continue;
+        }
+
+        // ── Contact: Create ──
+        if (routeKey === 'contact:create') {
+          const email = (this.getNodeParameter('email', i) as string).trim();
+          const phone = (this.getNodeParameter('phone', i) as string).trim();
+          const fields = this.getNodeParameter('contactFields', i, {}) as IDataObject;
+          if (!email && !phone && !fields.firstName) {
+            throw new NodeOperationError(
+              this.getNode(),
+              'Provide an email, a phone number, or a first name',
+              { itemIndex: i },
+            );
+          }
+          const result = await cortanaRequest(this, {
+            method: 'POST',
+            path: `/businesses/${businessId}/contacts`,
+            body: {
+              ...(email ? { email } : {}),
+              ...(phone ? { phone } : {}),
+              ...fields,
+            },
+          });
+          returnData.push((result.data as IDataObject) ?? result);
+          continue;
+        }
+
+        // ── Conversion: Create (the 0.2.x flow, unchanged) ──
+        if (routeKey === 'conversion:create') {
           const conversionConfigId = this.getNodeParameter('conversionConfigId', i) as string;
           const chosenSource = this.getNodeParameter('sourceId', i, AUTO_SOURCE) as string;
           const email = (this.getNodeParameter('email', i) as string).trim();
@@ -543,54 +1215,31 @@ export class CortanaAi implements INodeType {
             body,
           });
           returnData.push(result.data as IDataObject);
+          continue;
         }
 
-        if (resource === 'conversion' && operation === 'getMany') {
-          const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-          const limit = returnAll ? Infinity : (this.getNodeParameter('limit', i) as number);
-          const filters = this.getNodeParameter('filters', i) as IDataObject;
+        // ── Conversion: Get Many (typed filters) ──
+        if (routeKey === 'conversion:getMany') {
+          const returnAll = this.getNodeParameter('returnAll', i, false) as boolean;
+          const limit = returnAll ? Infinity : (this.getNodeParameter('limit', i, 50) as number);
+          const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
 
           const qs: IDataObject = {};
           if (filters.configId) qs.configId = filters.configId;
           if (filters.from) qs.from = new Date(filters.from as string).toISOString();
           if (filters.to) qs.to = new Date(filters.to as string).toISOString();
 
-          // New pagination: page/limit envelope with pagination.hasMore.
-          const collected: IDataObject[] = [];
-          for (let page = 1; page <= MAX_PAGES; page++) {
-            const result = await cortanaRequest(this, {
-              method: 'GET',
-              path: `/businesses/${businessId}/conversions/entries`,
-              qs: { ...qs, page, limit: Math.min(PAGE_SIZE, limit === Infinity ? PAGE_SIZE : limit) },
-            });
-            const entries = (result.data as IDataObject[]) ?? [];
-            collected.push(...entries);
-            const pagination = result.pagination as IDataObject | undefined;
-            if (collected.length >= limit || !pagination?.hasMore || entries.length === 0) break;
-          }
-          returnData.push(...(limit === Infinity ? collected : collected.slice(0, limit)));
+          returnData.push(
+            ...(await paginate(`/businesses/${businessId}/conversions/entries`, qs, limit)),
+          );
+          continue;
         }
 
-        if (resource === 'contact' && operation === 'search') {
-          const query = this.getNodeParameter('query', i) as string;
-          const limit = this.getNodeParameter('limit', i) as number;
-
-          const result = await cortanaRequest(this, {
-            method: 'GET',
-            path: `/businesses/${businessId}/contacts`,
-            qs: { search: query, limit },
-          });
-          returnData.push(...(((result.data as IDataObject[]) ?? [])));
-        }
-
-        if (resource === 'conversionType' && operation === 'getMany') {
-          const result = await cortanaRequest(this, {
-            method: 'GET',
-            path: `/businesses/${businessId}/conversions/configs`,
-            qs: { limit: 100 },
-          });
-          returnData.push(...(((result.data as IDataObject[]) ?? [])));
-        }
+        throw new NodeOperationError(
+          this.getNode(),
+          `Unsupported operation "${operation}" for resource "${resource}"`,
+          { itemIndex: i },
+        );
       } catch (err) {
         if (this.continueOnFail()) {
           returnData.push({ error: extractErrorMessage(err) });
