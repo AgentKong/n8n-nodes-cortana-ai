@@ -153,7 +153,6 @@ const OBJECT_ROUTES: Record<string, (businessId: string) => string> = {
   'attribution:getPresets': (b) => `/businesses/${b}/attribution/presets`,
   'attribution:getUtms': (b) => `/businesses/${b}/attribution/utms`,
   'shopify:getAnalytics': (b) => `/businesses/${b}/shopify/analytics`,
-  'stripe:getMetrics': (b) => `/businesses/${b}/stripe/metrics`,
 };
 
 // ─── Property factories (keep the 18-resource schema readable) ─────────
@@ -566,6 +565,38 @@ export class CortanaAi implements INodeType {
         ['getMany'],
         'ID of the conversation whose messages to retrieve',
       ),
+
+      // ─── Stripe: Get Metrics params (endpoint requires a date range) ────
+      {
+        displayName: 'From',
+        name: 'metricsFrom',
+        type: 'dateTime',
+        required: true,
+        displayOptions: { show: { resource: ['stripe'], operation: ['getMetrics'] } },
+        default: '',
+        description: 'Beginning of the metrics window',
+      },
+      {
+        displayName: 'To',
+        name: 'metricsTo',
+        type: 'dateTime',
+        required: true,
+        displayOptions: { show: { resource: ['stripe'], operation: ['getMetrics'] } },
+        default: '',
+        description: 'End of the metrics window',
+      },
+      {
+        displayName: 'Period Type',
+        name: 'periodType',
+        type: 'options',
+        displayOptions: { show: { resource: ['stripe'], operation: ['getMetrics'] } },
+        options: [
+          { name: 'Daily', value: 'daily' },
+          { name: 'Monthly', value: 'monthly' },
+        ],
+        default: 'daily',
+        description: 'Granularity of the metrics buckets',
+      },
 
       // ─── Attribution: Get Data params ───────────────────────────────────
       {
@@ -1123,6 +1154,25 @@ export class CortanaAi implements INodeType {
               limit,
             )),
           );
+          continue;
+        }
+
+        // ── Stripe: Get Metrics (requires a date range) ──
+        if (routeKey === 'stripe:getMetrics') {
+          const from = new Date(this.getNodeParameter('metricsFrom', i) as string).toISOString();
+          const to = new Date(this.getNodeParameter('metricsTo', i) as string).toISOString();
+          const result = await cortanaRequest(this, {
+            method: 'GET',
+            path: `/businesses/${businessId}/stripe/metrics`,
+            qs: {
+              from,
+              to,
+              periodType: this.getNodeParameter('periodType', i) as string,
+            },
+          });
+          const data = result.data as IDataObject | IDataObject[];
+          if (Array.isArray(data)) returnData.push(...data);
+          else returnData.push(data ?? result);
           continue;
         }
 

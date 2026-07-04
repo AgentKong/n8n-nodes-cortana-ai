@@ -123,7 +123,6 @@ const OBJECT_ROUTES = {
     'attribution:getPresets': (b) => `/businesses/${b}/attribution/presets`,
     'attribution:getUtms': (b) => `/businesses/${b}/attribution/utms`,
     'shopify:getAnalytics': (b) => `/businesses/${b}/shopify/analytics`,
-    'stripe:getMetrics': (b) => `/businesses/${b}/stripe/metrics`,
 };
 // ─── Property factories (keep the 18-resource schema readable) ─────────
 function idProperty(displayName, name, resource, operations, description) {
@@ -423,6 +422,37 @@ class CortanaAi {
                 idProperty('Session ID', 'entityId', 'trackingSession', ['get'], 'ID of the tracking session to retrieve'),
                 idProperty('Call ID', 'entityId', 'voiceCall', ['get', 'getTranscript'], 'ID of the voice call'),
                 idProperty('Conversation ID', 'conversationId', 'message', ['getMany'], 'ID of the conversation whose messages to retrieve'),
+                // ─── Stripe: Get Metrics params (endpoint requires a date range) ────
+                {
+                    displayName: 'From',
+                    name: 'metricsFrom',
+                    type: 'dateTime',
+                    required: true,
+                    displayOptions: { show: { resource: ['stripe'], operation: ['getMetrics'] } },
+                    default: '',
+                    description: 'Beginning of the metrics window',
+                },
+                {
+                    displayName: 'To',
+                    name: 'metricsTo',
+                    type: 'dateTime',
+                    required: true,
+                    displayOptions: { show: { resource: ['stripe'], operation: ['getMetrics'] } },
+                    default: '',
+                    description: 'End of the metrics window',
+                },
+                {
+                    displayName: 'Period Type',
+                    name: 'periodType',
+                    type: 'options',
+                    displayOptions: { show: { resource: ['stripe'], operation: ['getMetrics'] } },
+                    options: [
+                        { name: 'Daily', value: 'daily' },
+                        { name: 'Monthly', value: 'monthly' },
+                    ],
+                    default: 'daily',
+                    description: 'Granularity of the metrics buckets',
+                },
                 // ─── Attribution: Get Data params ───────────────────────────────────
                 {
                     displayName: 'Start Date',
@@ -961,6 +991,26 @@ class CortanaAi {
                     const returnAll = this.getNodeParameter('returnAll', i, false);
                     const limit = returnAll ? Infinity : this.getNodeParameter('limit', i, 50);
                     returnData.push(...(await paginate(`/businesses/${businessId}/conversations/${conversationId}/messages`, {}, limit)));
+                    continue;
+                }
+                // ── Stripe: Get Metrics (requires a date range) ──
+                if (routeKey === 'stripe:getMetrics') {
+                    const from = new Date(this.getNodeParameter('metricsFrom', i)).toISOString();
+                    const to = new Date(this.getNodeParameter('metricsTo', i)).toISOString();
+                    const result = await cortanaRequest(this, {
+                        method: 'GET',
+                        path: `/businesses/${businessId}/stripe/metrics`,
+                        qs: {
+                            from,
+                            to,
+                            periodType: this.getNodeParameter('periodType', i),
+                        },
+                    });
+                    const data = result.data;
+                    if (Array.isArray(data))
+                        returnData.push(...data);
+                    else
+                        returnData.push(data !== null && data !== void 0 ? data : result);
                     continue;
                 }
                 // ── Attribution ──
