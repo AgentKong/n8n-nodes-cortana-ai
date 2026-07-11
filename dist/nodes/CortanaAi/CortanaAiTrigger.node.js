@@ -248,9 +248,8 @@ class CortanaAiTrigger {
             const header = this.getHeaderData()['x-cortana-signature'];
             const rawBody = (_b = (_a = req.rawBody) === null || _a === void 0 ? void 0 : _a.toString('utf8')) !== null && _b !== void 0 ? _b : JSON.stringify(bodyData);
             if (!header || !verifySignature(secret, header, rawBody)) {
-                // Log + ignore: respond 200 so the sender doesn't retry a payload we
+                // Ignore silently: respond 200 so the sender doesn't retry a payload we
                 // deliberately rejected, but start no workflow run.
-                console.warn('[CortanaAiTrigger] Ignored webhook with invalid signature');
                 return { noWebhookResponse: false, workflowData: [] };
             }
         }

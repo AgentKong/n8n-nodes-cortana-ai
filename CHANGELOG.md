@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.3 — 2026-07
+
+Review-compliance release addressing the n8n community-node review of 0.3.0.
+No functional or API changes.
+
+### Fixed
+- 429 retry backoff no longer uses the restricted `setTimeout` global; it now
+  awaits the `sleep` helper from `n8n-workflow` (satisfies
+  `@n8n/community-nodes/no-restricted-globals`).
+- HTTP failures from the Cortana API are now surfaced as `NodeApiError` instead
+  of `NodeOperationError`, preserving the HTTP status code and response body in
+  the n8n execution UI.
+- Removed the `console.warn` in the trigger's invalid-signature path; the webhook
+  already returns a silent 200 with no workflow run.
+- Codex category `Marketing` → `Marketing & Content` (the only supported value;
+  the unsupported one was silently dropped by the n8n UI) in both node codex
+  files.
+
+> Note: 0.3.2 was tagged in git but never published to npm; 0.3.3 is the first
+> npm release on top of the 0.3.x API-coverage work.
+
 ## 0.3.1 — 2026-07
 
 ### Changed
