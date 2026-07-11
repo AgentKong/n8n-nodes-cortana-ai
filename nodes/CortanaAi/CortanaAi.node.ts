@@ -7,8 +7,9 @@ import type {
   INodeProperties,
   ILoadOptionsFunctions,
   INodePropertyOptions,
+  JsonObject,
 } from 'n8n-workflow';
-import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError, NodeApiError, sleep } from 'n8n-workflow';
 
 const DEFAULT_BASE_URL = 'https://app.usecortana.ai/api/v1';
 
@@ -85,7 +86,7 @@ async function cortanaRequest(
           'retry-after'
         ] ?? 2,
       );
-      await new Promise((resolve) => setTimeout(resolve, Math.min(retryAfter, 30) * 1000));
+      await sleep(Math.min(retryAfter, 30) * 1000);
       return (await doRequest()) as IDataObject;
     }
     throw err;
@@ -1295,8 +1296,14 @@ export class CortanaAi implements INodeType {
           returnData.push({ error: extractErrorMessage(err) });
           continue;
         }
-        if (err instanceof NodeOperationError) throw err;
-        throw new NodeOperationError(this.getNode(), extractErrorMessage(err), { itemIndex: i });
+        // Our own validation errors already carry the right context. Re-throw as-is.
+        if (err instanceof NodeOperationError || err instanceof NodeApiError) throw err;
+        // HTTP failures from the Cortana API: NodeApiError preserves the status code
+        // and response body in the n8n execution UI (NodeOperationError discards them).
+        throw new NodeApiError(this.getNode(), err as JsonObject, {
+          itemIndex: i,
+          message: extractErrorMessage(err),
+        });
       }
     }
 
