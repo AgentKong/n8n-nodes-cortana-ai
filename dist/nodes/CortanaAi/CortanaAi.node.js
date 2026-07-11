@@ -60,7 +60,7 @@ async function cortanaRequest(ctx, options) {
         const statusCode = err.statusCode;
         if (statusCode === 429) {
             const retryAfter = Number((_d = (_c = (_b = err.response) === null || _b === void 0 ? void 0 : _b.headers) === null || _c === void 0 ? void 0 : _c['retry-after']) !== null && _d !== void 0 ? _d : 2);
-            await new Promise((resolve) => setTimeout(resolve, Math.min(retryAfter, 30) * 1000));
+            await (0, n8n_workflow_1.sleep)(Math.min(retryAfter, 30) * 1000);
             return (await doRequest());
         }
         throw err;
@@ -1120,9 +1120,15 @@ class CortanaAi {
                     returnData.push({ error: extractErrorMessage(err) });
                     continue;
                 }
-                if (err instanceof n8n_workflow_1.NodeOperationError)
+                // Our own validation errors already carry the right context. Re-throw as-is.
+                if (err instanceof n8n_workflow_1.NodeOperationError || err instanceof n8n_workflow_1.NodeApiError)
                     throw err;
-                throw new n8n_workflow_1.NodeOperationError(this.getNode(), extractErrorMessage(err), { itemIndex: i });
+                // HTTP failures from the Cortana API: NodeApiError preserves the status code
+                // and response body in the n8n execution UI (NodeOperationError discards them).
+                throw new n8n_workflow_1.NodeApiError(this.getNode(), err, {
+                    itemIndex: i,
+                    message: extractErrorMessage(err),
+                });
             }
         }
         return [this.helpers.returnJsonArray(returnData)];
